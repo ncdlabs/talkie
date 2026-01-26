@@ -31,8 +31,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CALIBRATION_RECORD_SEC = 10
-CALIBRATION_PHRASE = "I want some water."
+CALIBRATION_RECORD_SEC = 35
+
+# Mix of short, medium, and long sentences for thorough voice calibration
+CALIBRATION_PHRASES = [
+    "Yes.",
+    "No.",
+    "I want some water.",
+    "Help me.",
+    "I'm cold.",
+    "Could you turn off the light when you leave?",
+    "I need to use the bathroom.",
+    "I would like to watch the news on television after dinner if that's all right with you.",
+    "When you have a moment, could you please bring me my reading glasses from the kitchen table?",
+]
+CALIBRATION_PHRASE_DISPLAY = " ".join(CALIBRATION_PHRASES)  # single string for analyzer/LLM
 
 CALIBRATION_VERSION = 1
 # Keys removed by "Clear calibration" (tts_voice is left so Settings choice is preserved)
@@ -144,9 +157,10 @@ class CalibrationDialog(QDialog):
         voice_cal_group = QGroupBox("Calibrate with your voice")
         voice_cal_layout = QVBoxLayout(voice_cal_group)
         voice_cal_layout.addWidget(
-            QLabel("Say the phrase below in your normal voice, then click Record. We'll analyze your volume and speech to suggest settings.")
+            QLabel("Say the sentences below in your normal voice (short and long), then click Record. We'll analyze your volume and speech to suggest settings.")
         )
-        voice_cal_layout.addWidget(QLabel(f'"{CALIBRATION_PHRASE}"'))
+        phrases_text = "\n".join(f'  · {p}' for p in CALIBRATION_PHRASES)
+        voice_cal_layout.addWidget(QLabel(phrases_text))
         self._record_btn = QPushButton("Record")
         self._record_btn.setToolTip(f"Record for {CALIBRATION_RECORD_SEC} seconds; then we analyze and suggest settings.")
         self._record_btn.clicked.connect(self._on_record_clicked)
@@ -295,7 +309,7 @@ class CalibrationDialog(QDialog):
         self._record_status.setText("Recording...")
         config = self._config
         record_sec = CALIBRATION_RECORD_SEC
-        phrase = CALIBRATION_PHRASE
+        phrase = CALIBRATION_PHRASE_DISPLAY
 
         def on_progress(sec_left: int) -> None:
             self.recording_progress.emit(sec_left)

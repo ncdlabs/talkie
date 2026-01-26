@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QKeySequence, QShortcut
+from PyQt6.QtGui import QCloseEvent, QKeySequence, QResizeEvent, QShortcut
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
     QDoubleSpinBox,
@@ -83,14 +85,11 @@ class MainWindow(QMainWindow):
         ui_config = config.get("ui", {})
 
         self.setWindowTitle("Talkie")
-        if ui_config.get("fullscreen", True):
-            self.showFullScreen()
-        else:
-            self.showMaximized()
+        self.setMinimumSize(360, 400)
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+        layout = QVBoxLayout(content)
         layout.setSpacing(16)
         layout.setContentsMargins(20, 20, 20, 20)
 
@@ -124,11 +123,12 @@ class MainWindow(QMainWindow):
         self._response_edit.setPlaceholderText("Your sentence will appear here in large text after you speak.")
         self._response_edit.setMinimumHeight(80)
         self._response_edit.setMaximumHeight(16777215)
-        response_font_size = int(ui_config.get("response_font_size", 48))
+        self._base_response_font_size = int(ui_config.get("response_font_size", 48))
         from PyQt6.QtGui import QFont
         font = self._response_edit.font()
-        font.setPointSize(response_font_size)
+        font.setPointSize(self._base_response_font_size)
         self._response_edit.setFont(font)
+        self._response_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._response_edit, stretch=1)
 
         sensitivity_row = QHBoxLayout()
@@ -215,6 +215,22 @@ class MainWindow(QMainWindow):
         self._debug_frame.setVisible(False)
         layout.addWidget(self._debug_frame)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._scroll_area = scroll
+        self._content = content
+        self.setCentralWidget(scroll)
+
+        if ui_config.get("fullscreen", True):
+            self.showFullScreen()
+        else:
+            self.showMaximized()
+
         shortcut_d = QShortcut(QKeySequence(Qt.Key.Key_D), self)
         shortcut_d.activated.connect(self._toggle_debug)
         shortcut_q = QShortcut(QKeySequence(Qt.Key.Key_Q), self)
@@ -231,6 +247,44 @@ class MainWindow(QMainWindow):
         self._on_status("Stopped")
         self._append_debug_direct("App ready. Click Start listening; wait until the light turns green, then speak. First result after one chunk (~4 sec). D = debug log, Q = quit.")
         QTimer.singleShot(400, self._speak_ready)
+        QTimer.singleShot(100, self._adjust_to_viewport)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._adjust_to_viewport()
+
+    def _adjust_to_viewport(self) -> None:
+        """Keep UI fitting the viewport: expand content when large, scale response font when small."""
+        scroll = getattr(self, "_scroll_area", None)
+        content = getattr(self, "_content", None)
+        if not scroll or not content:
+            return
+        viewport = scroll.viewport()
+        if not viewport:
+            return
+        vh = viewport.height()
+        vw = viewport.width()
+        # Make content fill viewport when viewport is larger than needed so we don't get a tiny stripe
+        hint = content.sizeHint()
+        content.setMinimumHeight(max(hint.height(), vh))
+        content.setMinimumWidth(max(hint.width(), vw))
+        # Scale response font and minimum height so the response area fits the viewport
+        if getattr(self, "_response_edit", None) and vh > 0:
+            from PyQt6.QtGui import QFont
+            cap = max(14, min(self._base_response_font_size, vh // 16))
+            font = self._response_edit.font()
+            if font.pointSize() != cap:
+                font.setPointSize(cap)
+                self._response_edit.setFont(font)
+            self._response_edit.setMinimumHeight(max(48, vh // 5))
+        # Limit debug log height so it doesn't dominate on small screens
+        if getattr(self, "_debug_log", None):
+            self._debug_log.setMaximumHeight(max(120, min(280, vh // 3)))
+        # Shrink volume/waveform strips on small viewports so response area gets room
+        if getattr(self, "_volume_widget", None):
+            self._volume_widget.setMaximumHeight(max(24, min(40, vh // 15)))
+        if getattr(self, "_waveform", None):
+            self._waveform.setMaximumHeight(max(40, min(160, vh // 5)))
 
     def _speak_ready(self) -> None:
         """Speak a short ready message once the app is shown (TTS)."""

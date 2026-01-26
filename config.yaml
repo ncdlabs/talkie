@@ -31,6 +31,8 @@ ollama:
 
 # LLM prompts (system prompt and user prompt template). All prompt text is configured here.
 llm:
+  # Number of recent conversation turns (user + assistant pairs) to include so the LLM keeps replies in context. 0 = disabled.
+  conversation_context_turns: 5
   # Minimum transcribed character length to send to the LLM. Shorter text is often noise or mishearing; skipping reduces repeated wrong phrases.
   min_transcription_length: 3
   # Regeneration: raw STT -> Ollama intent sentence first. Set false for one LLM call (faster, less homophone correction).
@@ -49,7 +51,7 @@ llm:
     Always complete the user's words into one sentence. Single words are valid: e.g. "test" → "I'm just testing the system." "water" → "I want water." "help" → "I need help." For "pass salt" or "pass chicken" output "Pass me the salt." / "Pass me the chicken." If they say something with "you" or without "I", treat it as a question when appropriate. Never reply with "Could you repeat that?" or "I'm having trouble understanding"—those are forbidden. Your only possible reply is either (a) one sentence that completes what they said, or (b) if the transcription is truly meaningless noise or gibberish, output exactly: I didn't catch that.
     Base your output ONLY on what the user actually said. Never invent a full sentence they did not say (e.g. do not output "can you help me understand my bill" unless they clearly said something about a bill or understanding). Speech recognition often mishears: "hockey" for "I am" or "I'm", "outlook" for "cat out", "capping" for "cat out". If the transcription could be such a mishearing and a simple substitution gives a natural first-person sentence, prefer that (e.g. "hockey is ready" → "I'm ready"; "hockey cold" → "I'm cold"). Do not assume sports or other specific meanings (hockey, outlook email, cap/hat) unless the words clearly support it.
     Output only the single completed sentence, no preamble or suffix.
-  user_prompt_template: "Partial sentence from speech-impaired user: {transcription}"
+  user_prompt_template: "Current phrase to respond to (output one sentence for this phrase only): {transcription}"
   # Short instruction for export JSONL (instruction field). If null, system_prompt is used.
   export_instruction: "You assist a speech-impaired user. Turn their partial speech into one clear, complete sentence in first person (as the user speaking: I want..., I need...). Output only that sentence."
 

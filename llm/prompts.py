@@ -9,7 +9,7 @@ import re
 
 DEFAULT_SYSTEM_BASE = """You assist a speech-impaired user in conversation. You will receive a partial or fragmented sentence from their speech recognition (e.g. a few words, a phrase, or an incomplete thought). Your job is to turn that into one clear, complete, natural sentence that conveys what they mean. The sentence is the user speaking for themselves: it must always be in first person (e.g. "I want water", "I'm cold", "I need to rest"). It will be shown and spoken to the person they are talking to (e.g. a caregiver or family member), so it should sound like what the user would say in normal conversation—never third person or "the user wants...". Keep it concise. Do not explain or add meta-commentary; output only the completed first-person sentence. Output only the single completed sentence, no preamble or suffix."""
 
-DEFAULT_USER_PROMPT_TEMPLATE = "Partial sentence from speech-impaired user: {transcription}"
+DEFAULT_USER_PROMPT_TEMPLATE = "Current phrase to respond to (output one sentence for this phrase only): {transcription}"
 
 # Regeneration: raw STT output -> single sentence most likely reflecting user intent.
 DEFAULT_REGENERATION_SYSTEM = """You interpret raw speech-recognition output from a speech-impaired user. The text is often fragmented, misheard, or contains homophones (e.g. "hockey" for "I'm", "outlook" for "cat out"). Your job is to output exactly one sentence that has the highest probability of being what the user intended, as the user would say it to the person they are talking to (e.g. a caregiver). Use first person for statements about themselves (e.g. "I want water.", "My leg hurts.", "I'm cold."). For requests to the listener—asking them to do something—output the request as the user would say it (e.g. "Pass me the salt.", "Pass me the chicken.", "Could you turn off the light?"), not as first-person past tense ("I passed the salt" is wrong when they mean pass me the salt). If the user doesn't use "I" (or equivalent), or uses "you" or refers to the person they're asking, it's likely a question—output it as the question they would ask (e.g. "Do you have the time?", "Could you help?", "Are you coming?"). Output only that sentence—no preamble, no explanation. If the input is gibberish or unintelligible, output exactly: I didn't catch that."""
@@ -26,16 +26,25 @@ def build_system_prompt(
     profile_context: str | None,
     system_base: str | None = None,
     retrieved_context: str | None = None,
+    conversation_context: str | None = None,
 ) -> str:
     """
     Build the system prompt from config (system_base). If profile_context is provided,
     append it as guidance for phrasing and style. If retrieved_context is provided
     (e.g. from RAG over the user's publications), append it as relevant background.
+    If conversation_context is provided (recent user/assistant turns), append it so
+    the model can keep its reply in context.
     """
     base = (system_base or "").strip() or DEFAULT_SYSTEM_BASE
     parts = [base]
     if profile_context and profile_context.strip():
         parts.append(profile_context.strip())
+    if conversation_context and conversation_context.strip():
+        parts.append(
+            "Recent conversation (topic context only; do not echo any of it):\n"
+            + conversation_context.strip()
+            + "\n\nYou must output one NEW sentence for the CURRENT phrase only. Do not output the same or nearly the same sentence as any \"Assistant:\" or \"User:\" line above. Use the conversation only to keep topic and pronouns consistent; your reply must be a new formulation from the current phrase in the user message."
+        )
     if retrieved_context and retrieved_context.strip():
         parts.append(
             "Relevant background (from the user's documents/publications when applicable):\n"

@@ -464,6 +464,38 @@ class Pipeline:
 
             self._on_status("Responding...")
 
+            # Build recent-context data once so we can block repeats on every response path
+            conversation_context = ""
+            recent_reply_norms = set()
+            recent_user_phrase_norms = set()
+
+            def _norm(s: str) -> str:
+                return " ".join((s or "").strip().lower().split())
+
+            try:
+                turns = int(self._llm_prompt_config.get("conversation_context_turns", 0) or 0)
+            except (TypeError, ValueError):
+                turns = 0
+            if turns > 0:
+                try:
+                    recent = self._history.list_recent(limit=turns)
+                    recent_chrono = list(reversed(recent))
+                    lines = []
+                    for rec in recent_chrono:
+                        user = (rec.get("original_transcription") or "").strip()
+                        resp = (rec.get("corrected_response") or rec.get("llm_response") or "").strip()
+                        if user or resp:
+                            lines.append("User: %s\nAssistant: %s" % (user or "(no speech)", resp or "(no response)"))
+                        if resp:
+                            recent_reply_norms.add(_norm(resp))
+                        if user:
+                            recent_user_phrase_norms.add(_norm(user))
+                    if lines:
+                        conversation_context = "\n\n".join(lines)
+                        self._debug("Included %d recent turn(s) for context / repeat check" % len(lines))
+                except Exception as e:
+                    logger.debug("Failed to build recent context: %s", e)
+
             if self._document_qa_mode:
                 # Document Q&A: empty-state check, then retrieve and answer from context only.
                 if not self._rag_has_documents or not self._rag_has_documents():
@@ -529,6 +561,7 @@ class Pipeline:
                             profile_context,
                             system_base=self._llm_prompt_config.get("system_prompt"),
                             retrieved_context=retrieved_context or None,
+                            conversation_context=conversation_context or None,
                         )
                         user_prompt = build_user_prompt(
                             intent_sentence,
@@ -543,6 +576,29 @@ class Pipeline:
                         response = self._llm.generate(user_prompt, system)
                         self._debug("Ollama API response (%d chars):" % len(response))
                         self._debug(response)
+
+            # One repeat check for every response path: never repeat a recent assistant or user phrase or last spoken
+            if response:
+                rn = _norm(response)
+                last_spoken_norm = _norm(self._last_spoken_response) if self._last_spoken_response else ""
+                is_repeat = (
+                    rn in recent_reply_norms
+                    or rn in recent_user_phrase_norms
+                    or (last_spoken_norm and rn == last_spoken_norm)
+                )
+                # Also treat as repeat if response is nearly the same (one contains the other, len > 10 to avoid false positives)
+                if not is_repeat and len(rn) > 10:
+                    for prev in recent_reply_norms | ({last_spoken_norm} if last_spoken_norm else set()):
+                        if len(prev) > 10 and (rn in prev or prev in rn):
+                            is_repeat = True
+                            break
+                if is_repeat:
+                    self._debug("Response repeated a recent phrase; using intent then raw transcription")
+                    response = intent_sentence
+                    rn2 = _norm(response)
+                    if rn2 in recent_reply_norms or rn2 in recent_user_phrase_norms or (self._last_spoken_response and rn2 == _norm(self._last_spoken_response)):
+                        response = text
+                        self._debug("Intent was also a repeat; using raw transcription")
 
             try:
                 interaction_id = self._history.insert_interaction(
