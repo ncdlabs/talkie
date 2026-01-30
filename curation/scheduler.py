@@ -1,6 +1,7 @@
 """
 Run the curator on a schedule: in-process (when app is running) or via CLI for cron.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,17 +35,23 @@ def run_curation_from_config(db_path: str, config_dict: dict | None) -> dict[str
             config_dict.get("correction_weight_bump", cfg.correction_weight_bump)
         )
         cfg.pattern_count_weight_scale = float(
-            config_dict.get("pattern_count_weight_scale", cfg.pattern_count_weight_scale)
+            config_dict.get(
+                "pattern_count_weight_scale", cfg.pattern_count_weight_scale
+            )
         )
         cfg.exclude_duplicate_phrase = bool(
             config_dict.get("exclude_duplicate_phrase", cfg.exclude_duplicate_phrase)
         )
         cfg.exclude_empty_transcription = bool(
-            config_dict.get("exclude_empty_transcription", cfg.exclude_empty_transcription)
+            config_dict.get(
+                "exclude_empty_transcription", cfg.exclude_empty_transcription
+            )
         )
         cfg.delete_older_than_days = config_dict.get("delete_older_than_days")
         cfg.max_interactions_to_curate = int(
-            config_dict.get("max_interactions_to_curate", cfg.max_interactions_to_curate)
+            config_dict.get(
+                "max_interactions_to_curate", cfg.max_interactions_to_curate
+            )
         )
     return run_curation(repo, config=cfg)
 

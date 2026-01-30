@@ -1,0 +1,7 @@
+# Browser module manifest (optional).
+# See MODULES.md in project root for the module standard.
+name: browser
+description: "Voice-controlled web: search, open URL, store page for RAG."
+order: 30
+enabled: true
+config_file: config.yaml

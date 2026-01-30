@@ -27,7 +27,14 @@ stt:
 
 ollama:
   base_url: "http://localhost:11434"
-  model_name: "mistral"
+  # model_name: tinyllama = very small (~637 MiB); phi ~1.5 GiB; mistral ~4.5 GiB. Pull first: ollama pull tinyllama
+  model_name: "tinyllama"
+  # timeout_sec: request timeout for /api/generate (default 45). Increase if Ollama is slow; decrease to fail faster.
+  timeout_sec: 45
+  # options: pass-through to Ollama /api/generate. Defaults (in code): num_predict 256, temperature 0.4 for full single-sentence replies. Override here to tune.
+  # options:
+  #   num_predict: 256
+  #   temperature: 0.4
 
 # LLM prompts (system prompt and user prompt template). All prompt text is configured here.
 llm:
@@ -70,10 +77,14 @@ persistence:
   db_path: "data/talkie.db"
 
 # RAG: document upload, vectorization (Ollama embed), Chroma store; "Ask documents" query-by-voice.
+# To run Chroma in Podman: podman compose up -d (see compose.yaml), then set chroma_host (and optional chroma_port).
 rag:
   # Ollama embedding model; run: ollama pull nomic-embed-text
   embedding_model: "nomic-embed-text"
   vector_db_path: "data/rag_chroma"
+  # Chroma server (e.g. in Podman). Set chroma_host to use HTTP client; leave unset for embedded DB.
+  # chroma_host: "localhost"
+  # chroma_port: 8000
   top_k: 5
   document_qa_top_k: 8
   chunk_size: 500
@@ -94,7 +105,7 @@ curation:
   delete_older_than_days: null   # set to e.g. 365 to prune very old interactions
   max_interactions_to_curate: 10000
 
-# Profile / learning: limits and display caps (used for LLM context and UI)
+# Profile / learning: limits and display caps (used for LLM context and UI). Lower limits = less memory.
 profile:
   correction_limit: 200
   accepted_limit: 50
@@ -110,5 +121,92 @@ ui:
   # Response area (large text); default 48
   response_font_size: 48
 
+# Browser: voice-controlled web (search, open URL, store page for RAG).
+browser:
+  enabled: true
+  # macOS: use "Google Chrome" or configurable app name for open -a
+  chrome_app_name: "Google Chrome"
+  fetch_timeout_sec: 20
+  fetch_max_retries: 2
+  search_engine_url: "https://www.google.com/search?q={query}"
+  cooldown_sec: 2.0
+  demo_delay_between_scenarios_sec: 4.0
+
 logging:
-  level: INFO   # DEBUG | INFO | WARNING | ERROR
+  level: DEBUG   # DEBUG | INFO | WARNING | ERROR
+  file: "talkie_debug.log"   # app root relative; all logger output written here
+
+# Infrastructure: Service Discovery and Caching
+infrastructure:
+  consul:
+    enabled: true
+    host: "localhost"  # Override with CONSUL_HTTP_ADDR env var
+    port: 8500
+    token: null  # Optional ACL token
+
+  keydb:
+    enabled: true
+    host: "localhost"  # Override with KEYDB_HOST env var
+    port: 6379  # Override with KEYDB_PORT env var
+    password: null  # Optional password
+    db: 0
+
+  service_discovery:
+    enabled: true
+    cache_ttl_sec: 30
+    health_check_interval_sec: 30.0
+
+  load_balancing:
+    strategy: "health_based"  # round_robin, random, health_based, least_connections
+    max_failover_attempts: 3
+
+# Module server configuration
+# Modules can run as HTTP API servers (default: localhost) or be accessed remotely
+modules:
+  speech:
+    server:
+      enabled: false  # Set to true to use HTTP API (default: false = in-process)
+      host: "localhost"
+      port: 8001
+      timeout_sec: 30.0
+      retry_max: 3
+      retry_delay_sec: 1.0
+      health_check_interval_sec: 10.0
+      circuit_breaker_failure_threshold: 5
+      circuit_breaker_recovery_timeout_sec: 60.0
+      api_key: null  # Optional API key for remote modules
+      # Service discovery options
+      use_service_discovery: false  # Use Consul/KeyDB for service discovery
+      endpoints: []  # Static endpoints (if not using service discovery)
+      # endpoints:
+      #   - "http://speech-1:8001"
+      #   - "http://speech-2:8001"
+      #   - "http://speech-3:8001"
+  rag:
+    server:
+      enabled: false
+      host: "localhost"
+      port: 8002
+      timeout_sec: 30.0
+      retry_max: 3
+      retry_delay_sec: 1.0
+      health_check_interval_sec: 10.0
+      circuit_breaker_failure_threshold: 5
+      circuit_breaker_recovery_timeout_sec: 60.0
+      api_key: null
+      use_service_discovery: false
+      endpoints: []
+  browser:
+    server:
+      enabled: false
+      host: "localhost"
+      port: 8003
+      timeout_sec: 30.0
+      retry_max: 3
+      retry_delay_sec: 1.0
+      health_check_interval_sec: 10.0
+      circuit_breaker_failure_threshold: 5
+      circuit_breaker_recovery_timeout_sec: 60.0
+      api_key: null
+      use_service_discovery: false
+      endpoints: []

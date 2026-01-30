@@ -1,0 +1,7 @@
+# Speech module manifest (optional).
+# See MODULES.md in project root for the module standard.
+name: speech
+description: Audio capture, STT, TTS, speaker filter, calibration.
+order: 10
+enabled: true
+config_file: config.yaml

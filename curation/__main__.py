@@ -4,6 +4,7 @@ CLI entry point for running curation once or exporting for fine-tuning.
   pipenv run python -m curation --export out.jsonl   # export JSONL for fine-tuning
 Uses TALKIE_CONFIG or default config.yaml for db_path and curation section.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,13 +18,17 @@ from curation.scheduler import run_curation_from_config
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    parser = argparse.ArgumentParser(description="Run curation or export for fine-tuning")
+    parser = argparse.ArgumentParser(
+        description="Run curation or export for fine-tuning"
+    )
     parser.add_argument(
         "--export",
         metavar="FILE",
         help="Export interactions to JSONL file for fine-tuning instead of running curation",
     )
-    parser.add_argument("--limit", type=int, default=5000, help="Max rows for export (default 5000)")
+    parser.add_argument(
+        "--limit", type=int, default=5000, help="Max rows for export (default 5000)"
+    )
     args = parser.parse_args()
 
     try:
@@ -36,7 +41,9 @@ def main() -> None:
 
     if args.export:
         llm_cfg = config.get("llm", {})
-        system_instruction = llm_cfg.get("export_instruction") or llm_cfg.get("system_prompt")
+        system_instruction = llm_cfg.get("export_instruction") or llm_cfg.get(
+            "system_prompt"
+        )
         n = export_for_finetuning(
             db_path,
             args.export,

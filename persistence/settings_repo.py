@@ -1,6 +1,7 @@
 """
 Repository for user_settings key-value store (e.g. user_context).
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,15 +30,19 @@ class SettingsRepo:
     ) -> None:
         self._connector = connector
         self._user_context_max_chars = (
-            user_context_max_chars if user_context_max_chars is not None else USER_CONTEXT_MAX_CHARS
+            user_context_max_chars
+            if user_context_max_chars is not None
+            else USER_CONTEXT_MAX_CHARS
         )
 
     def get(self, key: str) -> str | None:
         """Return value for key, or None if not found."""
+
         def get_one(conn: sqlite3.Connection) -> str | None:
             cur = conn.execute("SELECT value FROM user_settings WHERE key = ?", (key,))
             row = cur.fetchone()
             return row[0] if row else None
+
         try:
             return with_connection(self._connector, get_one)
         except sqlite3.Error as e:
@@ -68,6 +73,7 @@ class SettingsRepo:
         """Store multiple key/value pairs in one transaction. On failure, rolls back."""
         if not pairs:
             return
+
         def do_set_many(conn: sqlite3.Connection) -> None:
             for key, value in pairs:
                 if key == "user_context" and len(value) > self._user_context_max_chars:
@@ -79,6 +85,7 @@ class SettingsRepo:
                     """,
                     (key, value),
                 )
+
         try:
             with_connection(self._connector, do_set_many, commit=True)
         except sqlite3.Error as e:
@@ -90,7 +97,9 @@ class SettingsRepo:
         try:
             with_connection(
                 self._connector,
-                lambda conn: conn.execute("DELETE FROM user_settings WHERE key = ?", (key,)),
+                lambda conn: conn.execute(
+                    "DELETE FROM user_settings WHERE key = ?", (key,)
+                ),
                 commit=True,
             )
         except sqlite3.Error as e:
@@ -101,9 +110,11 @@ class SettingsRepo:
         """Remove multiple keys in one transaction. On failure, rolls back."""
         if not keys:
             return
+
         def do_delete_many(conn: sqlite3.Connection) -> None:
             for key in keys:
                 conn.execute("DELETE FROM user_settings WHERE key = ?", (key,))
+
         try:
             with_connection(self._connector, do_delete_many, commit=True)
         except sqlite3.Error as e:

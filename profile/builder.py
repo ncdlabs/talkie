@@ -1,6 +1,7 @@
 """
 Build profile text from user context, corrections, and accepted pairs for LLM context.
 """
+
 from __future__ import annotations
 
 from profile.constants import ACCEPTED_DISPLAY_CAP, CORRECTION_DISPLAY_CAP
@@ -18,7 +19,11 @@ def _section_corrections(
 ) -> str:
     if not corrections:
         return ""
-    cap = correction_display_cap if correction_display_cap is not None else CORRECTION_DISPLAY_CAP
+    cap = (
+        correction_display_cap
+        if correction_display_cap is not None
+        else CORRECTION_DISPLAY_CAP
+    )
     lines = []
     for orig, corrected in corrections[:cap]:
         orig = (orig or "").strip()
@@ -31,7 +36,10 @@ def _section_corrections(
             lines.append(f'- Prefer: "{corrected}"')
     if not lines:
         return ""
-    return "User phrasing preferences (from corrections; prefer these when relevant):\n" + "\n".join(lines)
+    return (
+        "User phrasing preferences (from corrections; prefer these when relevant):\n"
+        + "\n".join(lines)
+    )
 
 
 def _section_accepted(
@@ -40,7 +48,11 @@ def _section_accepted(
 ) -> str:
     if not accepted:
         return ""
-    cap = accepted_display_cap if accepted_display_cap is not None else ACCEPTED_DISPLAY_CAP
+    cap = (
+        accepted_display_cap
+        if accepted_display_cap is not None
+        else ACCEPTED_DISPLAY_CAP
+    )
     lines = []
     for transcription, response in accepted[:cap]:
         t = (transcription or "").strip()
@@ -53,7 +65,9 @@ def _section_accepted(
             lines.append(f'- Accepted: "{r}"')
     if not lines:
         return ""
-    return "Accepted completions (use similar style when relevant):\n" + "\n".join(lines)
+    return "Accepted completions (use similar style when relevant):\n" + "\n".join(
+        lines
+    )
 
 
 def _section_training_facts(facts: list[str] | None) -> str:
@@ -89,7 +103,8 @@ def build_profile_text(
     if train:
         sections.append(train)
     corr = _section_corrections(
-        corrections if corrections else [], correction_display_cap=correction_display_cap
+        corrections if corrections else [],
+        correction_display_cap=correction_display_cap,
     )
     if corr:
         sections.append(corr)

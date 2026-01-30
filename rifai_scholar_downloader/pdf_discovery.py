@@ -32,7 +32,9 @@ def is_pdf_url(url: str) -> bool:
     return bool(PDF_PATH_RE.search(urlparse(url).path or ""))
 
 
-def head_pdf(url: str, timeout: int = 45, session: requests.Session | None = None) -> tuple[bool, str | None]:
+def head_pdf(
+    url: str, timeout: int = 45, session: requests.Session | None = None
+) -> tuple[bool, str | None]:
     """
     HEAD request to check if URL returns PDF. Returns (ok, final_url).
     ok is True only if Content-Type is application/pdf or path ends with .pdf after redirects.
@@ -84,7 +86,9 @@ def get_pdf_url_from_page(
     candidates: list[str] = []
 
     # link[rel="alternate"][type="application/pdf"]
-    for link in soup.find_all("link", rel="alternate", type=re.compile(r"application/pdf", re.I)):
+    for link in soup.find_all(
+        "link", rel="alternate", type=re.compile(r"application/pdf", re.I)
+    ):
         href = link.get("href")
         if href:
             candidates.append(urljoin(base, href))
@@ -95,7 +99,7 @@ def get_pdf_url_from_page(
         if not href or href.startswith("#") or href.startswith("javascript:"):
             continue
         text = (a.get_text() or "").strip().lower()
-        rel = (a.get("rel") or [])
+        rel = a.get("rel") or []
         if isinstance(rel, str):
             rel = [rel]
         rel_str = " ".join(r.lower() for r in rel)

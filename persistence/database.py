@@ -1,6 +1,12 @@
 """
 SQLite connection and schema initialization for Talkie.
+
+Repositories (e.g. history_repo, settings_repo, training_repo) use with_connection
+to run a function inside a connection. They typically wrap the call in
+try/except sqlite3.Error, log with logger.exception, and re-raise so callers
+can show a user-facing message.
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,6 +42,7 @@ def with_connection(
     finally:
         conn.close()
 
+
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 
@@ -43,6 +50,7 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
     """Apply performance and robustness PRAGMAs. Safe to call on every connection."""
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
+
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Run idempotent migrations for existing DBs (e.g. add new columns)."""

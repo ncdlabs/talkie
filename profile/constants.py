@@ -1,6 +1,7 @@
 """
 Centralized limits for profile and history. Single source for caps and limits.
 """
+
 from __future__ import annotations
 
 CORRECTION_PROFILE_LIMIT = 200

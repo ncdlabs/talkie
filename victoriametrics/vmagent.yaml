@@ -1,0 +1,60 @@
+# VMagent configuration for metrics collection
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: 'talkie'
+    replica: 'vmagent-1'
+
+scrape_configs:
+  # Consul service discovery
+  - job_name: 'consul-services'
+    consul_sd_configs:
+      - server: 'consul-server:8500'
+        services: ['speech', 'rag', 'browser']
+    relabel_configs:
+      - source_labels: [__meta_consul_service]
+        target_label: service
+      - source_labels: [__meta_consul_node]
+        target_label: instance
+      - source_labels: [__meta_consul_service_address, __meta_consul_service_port]
+        target_label: __address__
+        regex: (.+);(.+)
+        replacement: ${1}:${2}
+      - source_labels: [__meta_consul_service_metadata_metrics_path]
+        target_label: __metrics_path__
+        regex: (.+)
+        replacement: ${1}
+      - source_labels: [__address__]
+        target_label: __metrics_path__
+        regex: (.+)
+        replacement: ${1}/metrics
+
+  # VictoriaMetrics itself
+  - job_name: 'victoriametrics'
+    static_configs:
+      - targets: ['victoriametrics:8428']
+        labels:
+          service: 'victoriametrics'
+
+  # VMagent itself
+  - job_name: 'vmagent'
+    static_configs:
+      - targets: ['vmagent:8429']
+        labels:
+          service: 'vmagent'
+
+  # HAProxy stats
+  - job_name: 'haproxy'
+    static_configs:
+      - targets: ['haproxy:8404']
+        labels:
+          service: 'haproxy'
+    metrics_path: '/stats;csv'
+
+  # KeyDB
+  - job_name: 'keydb'
+    static_configs:
+      - targets: ['keydb:6379']
+        labels:
+          service: 'keydb'

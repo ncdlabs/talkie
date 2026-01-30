@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""
+Talkie web UI entry point: FastAPI server, WebSocket for audio + events, static HTML.
+Run: pipenv run python run_web.py
+Open: http://localhost:8765
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+# Ensure project root is on path
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from config import AppConfig  # noqa: E402
+from run import bootstrap_config_and_db  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+# Default host/port for web UI
+WEB_HOST = os.environ.get("TALKIE_WEB_HOST", "0.0.0.0")
+WEB_PORT = int(os.environ.get("TALKIE_WEB_PORT", "8765"))
+
+
+def _create_pipeline_and_app(
+    config: AppConfig, db_path: Path, web_capture, connections_ref
+):
+    """Build pipeline with web capture and UI callbacks that broadcast to WebSocket connections."""
+    from persistence.database import get_connection
+    from persistence.history_repo import HistoryRepo
+    from persistence.settings_repo import SettingsRepo
+    from persistence.training_repo import TrainingRepo
+    from app.pipeline import create_pipeline
+
+    def conn_factory():
+        return get_connection(str(db_path))
+
+    history_repo = HistoryRepo(conn_factory)
+    settings_repo = SettingsRepo(
+        conn_factory,
+        user_context_max_chars=config.get_user_context_max_chars(),
+    )
+    training_repo = TrainingRepo(conn_factory)
+
+    def broadcast(msg: dict) -> None:
+        """Send JSON to all connected clients (call from pipeline thread)."""
+        conns = connections_ref.get("connections") or set()
+        loop = connections_ref.get("loop")
+        if not conns or loop is None:
+            return
+        payload = json.dumps(msg)
+
+        async def send_all():
+            for ws in list(conns):
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    pass
+
+        try:
+            asyncio.run_coroutine_threadsafe(send_all(), loop)
+        except Exception as e:
+            logger.debug("Broadcast failed: %s", e)
+
+    speech_comps = None
+    try:
+        from modules.speech import create_speech_components
+
+        speech_comps = create_speech_components(config, settings_repo)
+    except ImportError:
+        pass
+
+    # Use no-op TTS on the server so only the browser speaks (avoids double voice: server + client TTS).
+    from modules.speech.tts.noop_engine import NoOpTTSEngine
+
+    pipeline = create_pipeline(
+        config,
+        history_repo,
+        settings_repo,
+        training_repo,
+        capture=web_capture,
+        stt=speech_comps.stt if speech_comps else None,
+        tts=NoOpTTSEngine(),
+        speaker_filter=speech_comps.speaker_filter if speech_comps else None,
+        auto_sensitivity=speech_comps.auto_sensitivity if speech_comps else None,
+    )
+
+    rag_service = None
+    try:
+        from modules.rag import register_with_pipeline
+
+        rag_service = register_with_pipeline(pipeline, config)
+    except Exception as e:
+        logger.warning("RAG not available: %s", e)
+        broadcast({"type": "debug", "message": "[WARN] RAG not available: " + str(e)})
+
+    browser_config = config.get_browser_config()
+    if browser_config.get("enabled"):
+        try:
+            from modules.browser import create_web_handler
+            from llm.client import OllamaClient
+
+            ollama_cfg = config.get("ollama", {})
+            intent_llm = OllamaClient(
+                base_url=ollama_cfg.get("base_url", "http://localhost:11434"),
+                model_name=ollama_cfg.get("model_name", "mistral"),
+                options=ollama_cfg.get("options"),
+            )
+            handler = create_web_handler(config, intent_llm, None)
+            if handler is not None:
+                pipeline.set_web_handler(handler)
+        except Exception as e:
+            logger.warning("Browser not available: %s", e)
+            broadcast(
+                {"type": "debug", "message": "[WARN] Browser not available: " + str(e)}
+            )
+
+    pipeline.set_ui_callbacks(
+        on_status=lambda s: broadcast({"type": "status", "value": s}),
+        on_response=lambda text, iid: broadcast(
+            {"type": "response", "text": text, "interaction_id": iid}
+        ),
+        on_error=lambda m: broadcast({"type": "error", "message": m}),
+        on_debug=lambda m: broadcast({"type": "debug", "message": m}),
+        on_volume=lambda v: broadcast({"type": "volume", "value": v}),
+        on_sensitivity_adjusted=lambda v: broadcast(
+            {"type": "sensitivity", "value": v}
+        ),
+    )
+
+    def _on_training_transcription(text: str) -> None:
+        try:
+            training_repo.add(text)
+            broadcast({"type": "training_fact_added"})
+        except Exception as e:
+            logger.exception("Training add failed: %s", e)
+
+    return {
+        "pipeline": pipeline,
+        "history_repo": history_repo,
+        "settings_repo": settings_repo,
+        "training_repo": training_repo,
+        "rag_service": rag_service,
+        "on_training_transcription": _on_training_transcription,
+    }
+
+
+def main() -> None:
+    config, db_path = bootstrap_config_and_db(_ROOT)
+
+    curation_cfg = config.get_curation_config()
+    interval_hours = float(curation_cfg.get("interval_hours", 0))
+    if interval_hours > 0:
+        from curation.scheduler import start_background_scheduler
+
+        start_background_scheduler(str(db_path), curation_cfg, interval_hours)
+
+    audio_cfg = config.get("audio") or {}
+    sample_rate = int(audio_cfg.get("sample_rate", 16000))
+    chunk_sec = float(audio_cfg.get("chunk_duration_sec", 5.0))
+    chunk_size = int(chunk_sec * sample_rate * 2)  # int16 = 2 bytes per sample
+    sens = float(audio_cfg.get("sensitivity", 1.0))
+
+    from app.web_capture import WebSocketAudioCapture
+
+    web_capture = WebSocketAudioCapture(
+        chunk_size_bytes=chunk_size, sample_rate=sample_rate
+    )
+    web_capture.set_sensitivity(sens)
+
+    connections_ref = {"connections": set(), "loop": None}
+    deps = _create_pipeline_and_app(config, db_path, web_capture, connections_ref)
+    pipeline = deps["pipeline"]
+    history_repo = deps["history_repo"]
+    settings_repo = deps["settings_repo"]
+    training_repo = deps["training_repo"]
+    rag_service = deps["rag_service"]
+    on_training_transcription = deps["on_training_transcription"]
+
+    from fastapi import (
+        FastAPI,
+        File,
+        UploadFile,
+        WebSocket,
+        WebSocketDisconnect,
+    )
+    from fastapi.exceptions import RequestValidationError
+    from starlette.requests import Request
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import FileResponse, JSONResponse
+    import tempfile
+
+    app = FastAPI(title="Talkie Web")
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+        """Convert 422 validation errors to 400 with a single error message for the client."""
+        errors = getattr(exc, "errors", lambda: [])()
+        msg = "; ".join(e.get("msg", str(e)) for e in errors) if errors else str(exc)
+        logger.debug("Request validation failed: %s (details: %s)", msg, errors)
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Request validation: {msg}"},
+        )
+
+    # Ref set after websocket_endpoint is defined; middleware uses it to handle /ws (avoids router 403).
+    _ws_handler_ref = [None]
+
+    class WebSocketHandleMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") == "websocket" and scope.get("path") in (
+                "/ws",
+                "/ws/",
+            ):
+                handler = _ws_handler_ref[0]
+                if handler:
+                    from starlette.websockets import WebSocket
+
+                    ws = WebSocket(scope, receive=receive, send=send)
+                    await handler(ws)
+                else:
+                    await self.app(scope, receive, send)
+            else:
+                if scope.get("type") == "websocket" and scope.get("path") == "/ws/":
+                    scope = dict(scope)
+                    scope["path"] = "/ws"
+                await self.app(scope, receive, send)
+
+    # Log request type and path for debugging (e.g. WebSocket 403)
+    class RequestLogMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") in ("http", "websocket"):
+                logger.info(
+                    "Request type=%s path=%r", scope.get("type"), scope.get("path")
+                )
+            await self.app(scope, receive, send)
+
+    app.add_middleware(WebSocketHandleMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(RequestLogMiddleware)
+    web_dir = _ROOT / "web"
+
+    @app.get("/")
+    async def index():
+        index_file = web_dir / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+        return {"message": "Talkie web UI", "static": "Put web/index.html in place"}
+
+    @app.get("/audio-worklet.js", include_in_schema=False)
+    async def audio_worklet():
+        worklet_file = web_dir / "audio-worklet.js"
+        if worklet_file.exists():
+            from starlette.responses import Response
+
+            return Response(
+                content=worklet_file.read_text(),
+                media_type="application/javascript",
+            )
+        from starlette.responses import PlainTextResponse
+
+        return PlainTextResponse("/* worklet not found */", status_code=404)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        from fastapi.responses import Response
+
+        return Response(status_code=204)
+
+    # --- REST API ---
+    profile_cfg = config.get_profile_config()
+    history_list_limit = int(profile_cfg.get("history_list_limit", 100))
+
+    @app.get("/api/history")
+    async def api_history_list():
+        records = history_repo.list_recent(limit=history_list_limit)
+        return {
+            "items": [
+                {
+                    "id": r["id"],
+                    "created_at": r["created_at"],
+                    "original_transcription": r["original_transcription"],
+                    "llm_response": r["llm_response"],
+                    "corrected_response": r.get("corrected_response"),
+                    "exclude_from_profile": bool(r.get("exclude_from_profile", 0)),
+                }
+                for r in records
+            ]
+        }
+
+    @app.patch("/api/history/{interaction_id:int}")
+    async def api_history_patch(interaction_id: int, request: Request):
+        body = await request.json()
+        if "corrected_response" in body:
+            history_repo.update_correction(
+                interaction_id, str(body["corrected_response"])
+            )
+        if "exclude_from_profile" in body:
+            history_repo.update_exclude_from_profile(
+                interaction_id, bool(body["exclude_from_profile"])
+            )
+        return {"ok": True}
+
+    @app.get("/api/settings")
+    async def api_settings_get():
+        keys = [
+            "user_context",
+            "tts_voice",
+            "calibration_sensitivity",
+            "calibration_chunk_duration_sec",
+            "calibration_min_transcription_length",
+            "voice_profile_threshold",
+        ]
+        out = {k: settings_repo.get(k) for k in keys}
+        try:
+            from modules.speech.calibration.voice_profile import is_voice_profile_available
+
+            out["voice_profile_enrolled"] = "true" if is_voice_profile_available(settings_repo) else "false"
+        except Exception:
+            out["voice_profile_enrolled"] = "false"
+        return out
+
+    @app.put("/api/settings")
+    async def api_settings_put(request: Request):
+        body = await request.json()
+        allowed = (
+            "user_context",
+            "tts_voice",
+            "calibration_sensitivity",
+            "calibration_chunk_duration_sec",
+            "calibration_min_transcription_length",
+            "voice_profile_threshold",
+        )
+        for k, v in body.items():
+            if k in allowed and v is not None:
+                settings_repo.set(k, str(v))
+        return {"ok": True}
+
+    @app.get("/api/calibration/steps")
+    async def api_calibration_steps():
+        """Return ordered calibration steps (voice enrollment, then sensitivity/pause)."""
+        try:
+            from modules.speech.calibration import CALIBRATION_STEPS
+
+            return {"steps": CALIBRATION_STEPS}
+        except Exception as e:
+            logger.debug("Calibration steps failed: %s", e)
+            return {"steps": []}
+
+    @app.post("/api/calibration/voice_enroll")
+    async def api_calibration_voice_enroll(request: Request):
+        """Enroll user voice from base64 audio. Uses raw body to avoid validation and support large payloads."""
+        try:
+            import json as json_mod
+            try:
+                raw = await request.body()
+                body = json_mod.loads(raw) if raw else None
+            except Exception as e:
+                logger.warning("Voice enroll body parse failed: %s", e)
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Invalid JSON body: {e}"},
+                )
+            if not body or not isinstance(body, dict):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Request body must be a JSON object with audio_base64 and sample_rate"},
+                )
+            try:
+                from modules.speech.calibration.voice_profile import enroll_user_voice
+                import base64 as b64
+            except ImportError as e:
+                return JSONResponse(status_code=503, content={"error": str(e)})
+            audio_base64 = (body.get("audio_base64") or "").strip() if isinstance(body.get("audio_base64"), str) else ""
+            try:
+                sample_rate = max(8000, min(48000, int(body.get("sample_rate", 16000))))
+            except (TypeError, ValueError):
+                sample_rate = 16000
+            if not audio_base64:
+                return JSONResponse(status_code=400, content={"error": "audio_base64 required"})
+            try:
+                audio_bytes = b64.b64decode(audio_base64)
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": f"Invalid audio_base64: {e}"})
+            success, message = enroll_user_voice(audio_bytes, sample_rate, settings_repo)
+            if success:
+                return {"ok": True, "message": message}
+            return JSONResponse(status_code=400, content={"error": message})
+        except Exception as e:
+            logger.exception("Voice enrollment failed: %s", e)
+            logger.info("Voice enrollment 500: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    @app.post("/api/calibration/voice_clear")
+    async def api_calibration_voice_clear():
+        """Clear enrolled voice profile so the app accepts all speakers again."""
+        try:
+            from modules.speech.calibration.voice_profile import clear_voice_profile
+
+            clear_voice_profile(settings_repo)
+            return {"ok": True}
+        except Exception as e:
+            logger.exception("Voice clear failed: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    @app.get("/api/settings/voices")
+    async def api_settings_voices():
+        try:
+            from modules.speech.tts.say_engine import get_available_voices
+
+            voices = get_available_voices()
+            return {"voices": voices if voices else ["Daniel"]}
+        except Exception:
+            return {"voices": ["Daniel"]}
+
+    @app.get("/api/training")
+    async def api_training_list():
+        rows = training_repo.list_all()
+        return {"items": [{"id": r[0], "text": r[1], "created_at": r[2]} for r in rows]}
+
+    @app.post("/api/training")
+    async def api_training_add(request: Request):
+        body = await request.json()
+        text = (body.get("text") or "").strip()
+        if not text:
+            return JSONResponse(status_code=400, content={"error": "text required"})
+        training_repo.add(text)
+        return {"ok": True}
+
+    @app.delete("/api/training/{fact_id:int}")
+    async def api_training_delete(fact_id: int):
+        training_repo.delete(fact_id)
+        return {"ok": True}
+
+    @app.get("/api/documents")
+    async def api_documents_list():
+        if rag_service is None:
+            return {"sources": []}
+        return {"sources": rag_service.list_indexed_sources()}
+
+    @app.post("/api/documents/upload")
+    async def api_documents_upload(files: list[UploadFile] = File(...)):
+        if rag_service is None:
+            return JSONResponse(status_code=503, content={"error": "RAG not available"})
+        paths = []
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                for f in files:
+                    if not f.filename:
+                        continue
+                    path = Path(tmp) / (f.filename or "upload")
+                    content = await f.read()
+                    path.write_bytes(content)
+                    paths.append(path)
+                if paths:
+                    rag_service.ingest(paths)
+            return {"ok": True, "ingested": len(paths)}
+        except Exception as e:
+            logger.exception("Documents upload failed: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    @app.delete("/api/documents/{source:path}")
+    async def api_documents_remove(source: str):
+        if rag_service is None:
+            return JSONResponse(status_code=503, content={"error": "RAG not available"})
+        rag_service.remove_from_index(source)
+        return {"ok": True}
+
+    async def websocket_endpoint(websocket: WebSocket):
+        try:
+            await websocket.accept()
+        except Exception as e:
+            logger.exception("WebSocket accept failed: %s", e)
+            raise
+        connections_ref["connections"].add(websocket)
+        connections_ref["loop"] = asyncio.get_running_loop()
+        try:
+            await websocket.send_text(
+                json.dumps({"type": "status", "value": "Stopped"})
+            )
+            while True:
+                try:
+                    raw_msg = await websocket.receive()
+                except WebSocketDisconnect:
+                    break
+                except RuntimeError as e:
+                    if "disconnect" in str(e).lower():
+                        break
+                    raise
+                if "text" in raw_msg:
+                    try:
+                        data = json.loads(raw_msg["text"])
+                        action = data.get("action")
+                        if action == "start":
+                            sample_rate = int(data.get("sample_rate", 16000))
+                            web_capture.set_client_sample_rate(sample_rate)
+                            web_capture.start()
+                            pipeline.start()
+                        elif action == "stop":
+                            pipeline.stop()
+                            web_capture.stop()
+                        elif action == "training_mode":
+                            on = data.get("on", False)
+                            pipeline.set_training_mode(on)
+                            pipeline.set_on_training_transcription(
+                                on_training_transcription if on else None
+                            )
+                    except Exception as e:
+                        logger.debug("WS message error: %s", e)
+                elif "bytes" in raw_msg:
+                    web_capture.put_chunk(bytes(raw_msg["bytes"]))
+        finally:
+            connections_ref["connections"].discard(websocket)
+            # Stop capture first so pipeline read_chunk() returns and the run loop can exit.
+            web_capture.stop()
+            pipeline.stop()
+
+    _ws_handler_ref[0] = websocket_endpoint
+
+    import uvicorn
+
+    logger.info("Talkie web UI: http://%s:%s", WEB_HOST, WEB_PORT)
+    uvicorn.run(app, host=WEB_HOST, port=WEB_PORT)
+
+
+if __name__ == "__main__":
+    main()

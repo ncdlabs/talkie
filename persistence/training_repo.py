@@ -1,6 +1,7 @@
 """
 Repository for training_facts: context sentences the user spoke in training mode (e.g. "Star is my dog").
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,6 +48,7 @@ class TrainingRepo:
 
     def list_all(self) -> list[tuple[int, str, str]]:
         """Return list of (id, text, created_at) ordered by created_at ascending."""
+
         def select(conn: sqlite3.Connection) -> list[tuple[int, str, str]]:
             cur = conn.execute(
                 "SELECT id, text, created_at FROM training_facts ORDER BY created_at ASC"
@@ -61,6 +63,7 @@ class TrainingRepo:
 
     def delete(self, fact_id: int) -> None:
         """Delete a training fact by id. Raises on DB error."""
+
         def delete_one(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM training_facts WHERE id = ?", (fact_id,))
             conn.commit()
@@ -73,6 +76,7 @@ class TrainingRepo:
 
     def get_for_profile(self, limit: int = TRAINING_FACTS_PROFILE_LIMIT) -> list[str]:
         """Return the most recent N training fact texts for LLM context (newest first in list)."""
+
         def select(conn: sqlite3.Connection) -> list[str]:
             cur = conn.execute(
                 """

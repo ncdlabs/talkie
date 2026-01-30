@@ -1,6 +1,7 @@
 """
 Repository for interaction history and corrections.
 """
+
 from __future__ import annotations
 
 import logging
@@ -115,6 +116,7 @@ class HistoryRepo:
         """
         Insert one interaction. Returns the new row id.
         """
+
         def insert(conn: sqlite3.Connection) -> int:
             orig = _truncate_for_storage(original_transcription)
             resp = _truncate_for_storage(llm_response)
@@ -126,19 +128,23 @@ class HistoryRepo:
                 (_now_iso(), orig, resp, speaker_id, session_id),
             )
             return cur.lastrowid or 0
+
         return with_connection(self._connector, insert, commit=True)
 
     def update_correction(self, interaction_id: int, corrected_response: str) -> None:
         """Update the corrected_response for an interaction (user/caregiver edit)."""
+
         def update(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "UPDATE interactions SET corrected_response = ? WHERE id = ?",
                 (corrected_response, interaction_id),
             )
+
         with_connection(self._connector, update, commit=True)
 
     def list_recent(self, limit: int = 100) -> list[InteractionRecord]:
         """Return most recent interactions (newest first)."""
+
         def query(conn: sqlite3.Connection) -> list[InteractionRecord]:
             if self._schema_has_exclude_from_profile(conn):
                 cur = conn.execute(
@@ -163,6 +169,7 @@ class HistoryRepo:
                     (limit,),
                 )
             return [_row_to_interaction_record(r) for r in cur.fetchall()]
+
         return with_connection(self._connector, query)
 
     def get_corrections_for_profile(self, limit: int = 200) -> list[tuple[str, str]]:
@@ -170,6 +177,7 @@ class HistoryRepo:
         Return list of (llm_response, corrected_response) for interactions
         that have a correction and are not excluded from profile.
         """
+
         def query(conn: sqlite3.Connection) -> list[tuple[str, str]]:
             if self._schema_has_exclude_from_profile(conn):
                 cur = conn.execute(
@@ -195,6 +203,7 @@ class HistoryRepo:
                     (limit,),
                 )
             return [(r[0], r[1]) for r in cur.fetchall()]
+
         return with_connection(self._connector, query)
 
     def get_accepted_for_profile(self, limit: int = 50) -> list[tuple[str, str]]:
@@ -202,6 +211,7 @@ class HistoryRepo:
         Return (original_transcription, llm_response) for interactions
         with no correction and not excluded from profile.
         """
+
         def query(conn: sqlite3.Connection) -> list[tuple[str, str]]:
             if self._schema_has_exclude_from_profile(conn):
                 cur = conn.execute(
@@ -227,15 +237,18 @@ class HistoryRepo:
                     (limit,),
                 )
             return [(r[0] or "", r[1] or "") for r in cur.fetchall()]
+
         return with_connection(self._connector, query)
 
     def update_exclude_from_profile(self, interaction_id: int, exclude: bool) -> None:
         """Set exclude_from_profile to 1 if exclude else 0 for the given interaction."""
+
         def update(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "UPDATE interactions SET exclude_from_profile = ? WHERE id = ?",
                 (1 if exclude else 0, interaction_id),
             )
+
         try:
             with_connection(self._connector, update, commit=True)
         except sqlite3.Error as e:
@@ -244,6 +257,7 @@ class HistoryRepo:
 
     def list_for_curation(self, limit: int = 10_000) -> list[InteractionRecord]:
         """Return interactions for curation (oldest first), including weight and correction status."""
+
         def query(conn: sqlite3.Connection) -> list[InteractionRecord]:
             has_weight = _has_column(conn, "weight")
             sel = """
@@ -259,15 +273,18 @@ class HistoryRepo:
                 (limit,),
             )
             return [_row_to_interaction_record(r) for r in cur.fetchall()]
+
         return with_connection(self._connector, query)
 
     def update_weight(self, interaction_id: int, weight: float | None) -> None:
         """Set weight for an interaction. None clears the weight."""
+
         def update(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "UPDATE interactions SET weight = ? WHERE id = ?",
                 (weight, interaction_id),
             )
+
         try:
             with_connection(self._connector, update, commit=True)
         except sqlite3.Error as e:
@@ -278,9 +295,13 @@ class HistoryRepo:
         """Set weight for multiple interactions in one transaction."""
         if not updates:
             return
+
         def batch(conn: sqlite3.Connection) -> None:
             for iid, w in updates:
-                conn.execute("UPDATE interactions SET weight = ? WHERE id = ?", (w, iid))
+                conn.execute(
+                    "UPDATE interactions SET weight = ? WHERE id = ?", (w, iid)
+                )
+
         try:
             with_connection(self._connector, batch, commit=True)
         except sqlite3.Error as e:
@@ -292,12 +313,14 @@ class HistoryRepo:
         if not interaction_ids:
             return
         val = 1 if exclude else 0
+
         def batch(conn: sqlite3.Connection) -> None:
             for iid in interaction_ids:
                 conn.execute(
                     "UPDATE interactions SET exclude_from_profile = ? WHERE id = ?",
                     (val, iid),
                 )
+
         try:
             with_connection(self._connector, batch, commit=True)
         except sqlite3.Error as e:
@@ -306,18 +329,21 @@ class HistoryRepo:
 
     def list_ids_older_than(self, created_before_iso: str) -> list[int]:
         """Return interaction ids with created_at < created_before_iso."""
+
         def query(conn: sqlite3.Connection) -> list[int]:
             cur = conn.execute(
                 "SELECT id FROM interactions WHERE created_at < ?",
                 (created_before_iso,),
             )
             return [row[0] for row in cur.fetchall()]
+
         return with_connection(self._connector, query)
 
     def delete_interactions(self, interaction_ids: list[int]) -> int:
         """Delete interactions by id. Returns number deleted."""
         if not interaction_ids:
             return 0
+
         def delete(conn: sqlite3.Connection) -> int:
             placeholders = ",".join("?" * len(interaction_ids))
             cur = conn.execute(
@@ -325,6 +351,7 @@ class HistoryRepo:
                 interaction_ids,
             )
             return cur.rowcount
+
         try:
             return with_connection(self._connector, delete, commit=True)
         except sqlite3.Error as e:

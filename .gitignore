@@ -29,8 +29,9 @@ ENV/
 .env.local
 *.local.yaml
 
-# Logs
+# Logs and runtime
 *.log
+.talkie-web.pid
 
 # Data and run-time artifacts
 data/*.db

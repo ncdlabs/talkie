@@ -1,0 +1,1289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Talkie</title>
+  <style>
+    /* Motor-accessibility: large touch targets (min 48px), spacing, clear focus */
+    :root {
+      --bg: #111;
+      --fg: #eee;
+      --accent: #0c6;
+      --muted: #666;
+      --touch-min: 48px;
+      --spacing: 1rem;
+      --spacing-lg: 1.5rem;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 1.125rem;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      padding: var(--spacing-lg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 { font-size: 1.75rem; margin: 0 0 var(--spacing-lg); }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacing);
+      align-items: center;
+      margin-bottom: var(--spacing-lg);
+    }
+    button {
+      font-size: 1.25rem;
+      min-height: var(--touch-min);
+      min-width: var(--touch-min);
+      padding: 0.75rem 2rem;
+      border: 2px solid var(--accent);
+      background: transparent;
+      color: var(--accent);
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent); color: var(--bg); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.active { background: var(--accent); color: var(--bg); }
+    button:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 3px;
+    }
+    #status {
+      font-size: 1.125rem;
+      color: var(--muted);
+      margin-bottom: var(--spacing);
+      min-height: 1.5em;
+    }
+    .status-hint { font-size: 1rem; color: var(--muted); margin-bottom: var(--spacing); }
+    .status-hint a {
+      color: var(--accent);
+      padding: 0.5rem 0.25rem;
+      display: inline-block;
+      min-height: var(--touch-min);
+      line-height: var(--touch-min);
+      margin: -0.5rem -0.25rem;
+    }
+    .status-hint a:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    button.reconnect { margin-left: var(--spacing); }
+    #response {
+      font-size: 2.25rem;
+      line-height: 1.5;
+      max-width: 40rem;
+      min-height: 5rem;
+      margin-bottom: var(--spacing-lg);
+      padding: var(--spacing-lg);
+      border: 1px solid var(--muted);
+      border-radius: var(--radius);
+    }
+    #volumeBar {
+      width: 100%;
+      max-width: 24rem;
+      height: 20px;
+      background: var(--muted);
+      border-radius: 10px;
+      margin-bottom: var(--spacing-lg);
+      overflow: hidden;
+    }
+    #volumeBarFill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.1s;
+    }
+    #debug {
+      font-size: 0.95rem;
+      color: var(--muted);
+      max-height: 14rem;
+      overflow-y: auto;
+      width: 100%;
+      max-width: 40rem;
+      padding: var(--spacing);
+      border: 1px solid var(--muted);
+      border-radius: var(--radius);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .error { color: #c66; }
+    nav {
+      display: flex;
+      gap: var(--spacing);
+      margin-bottom: var(--spacing-lg);
+      flex-wrap: wrap;
+    }
+    nav button {
+      font-size: 1.125rem;
+      min-height: var(--touch-min);
+      padding: 0.75rem 1.25rem;
+    }
+    .panel { display: none; width: 100%; max-width: 48rem; }
+    .panel.active { display: block; }
+    .panel > * + * { margin-top: var(--spacing-lg); }
+    table { width: 100%; border-collapse: collapse; margin-bottom: var(--spacing-lg); font-size: 1.0625rem; }
+    th, td { border: 1px solid var(--muted); padding: 0.75rem 1rem; text-align: left; }
+    th { background: var(--muted); }
+    tbody tr { cursor: pointer; min-height: var(--touch-min); }
+    tbody tr:hover { background: rgba(0, 204, 102, 0.08); }
+    tr.selected { background: rgba(0, 204, 102, 0.2); }
+    tbody tr:focus-visible { outline: 3px solid var(--accent); outline-offset: -1px; }
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      font-size: 1.125rem;
+      padding: var(--spacing);
+      background: var(--bg);
+      color: var(--fg);
+      border: 2px solid var(--muted);
+      border-radius: var(--radius);
+    }
+    textarea:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
+    input[type="checkbox"] {
+      cursor: pointer;
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      min-height: 24px;
+    }
+    input[type="number"], input[type="text"] {
+      min-height: var(--touch-min);
+      padding: 0.75rem 1rem;
+      font-size: 1.125rem;
+      background: var(--bg);
+      color: var(--fg);
+      border: 2px solid var(--muted);
+      border-radius: var(--radius);
+    }
+    .form-row { margin-bottom: var(--spacing-lg); }
+    .form-row label { display: block; margin-bottom: 0.5rem; font-size: 1.0625rem; color: var(--muted); }
+    select {
+      min-height: var(--touch-min);
+      padding: 0.75rem 1rem;
+      font-size: 1.125rem;
+      background: var(--bg);
+      color: var(--fg);
+      border: 2px solid var(--muted);
+      border-radius: var(--radius);
+      min-width: 14rem;
+    }
+    ul.list { list-style: none; padding: 0; margin: 0; }
+    ul.list li {
+      padding: var(--spacing);
+      border-bottom: 1px solid var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--spacing);
+      min-height: var(--touch-min);
+    }
+    ul.list li button, button.doc-remove {
+      min-height: var(--touch-min);
+      padding: 0.75rem 1.25rem;
+    }
+    /* Large file-input trigger: hide native, use label */
+    .file-wrap { margin-bottom: var(--spacing-lg); }
+    .file-wrap input[type="file"] {
+      position: absolute;
+      width: 0.1px;
+      height: 0.1px;
+      opacity: 0;
+      overflow: hidden;
+      z-index: -1;
+    }
+    .file-wrap label {
+      display: inline-block;
+      min-height: var(--touch-min);
+      padding: 0.75rem 2rem;
+      font-size: 1.25rem;
+      border: 2px solid var(--accent);
+      color: var(--accent);
+      background: transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    .file-wrap label:hover { background: var(--accent); color: var(--bg); }
+    .file-wrap label:focus-within { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .panel p { font-size: 1.0625rem; line-height: 1.5; margin: 0 0 var(--spacing); }
+    .skip-link {
+      position: absolute;
+      top: 0;
+      left: 0;
+      padding: var(--spacing) var(--spacing-lg);
+      background: var(--accent);
+      color: var(--bg);
+      font-size: 1.125rem;
+      font-weight: bold;
+      z-index: 100;
+      transform: translateY(-100%);
+      transition: transform 0.2s;
+    }
+    .skip-link:focus {
+      transform: translateY(0);
+      outline: 3px solid var(--fg);
+      outline-offset: 2px;
+    }
+    /* Status bar at bottom of viewport: Web UI -> server */
+    #statusbar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0 0.5rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+      background: rgba(0, 0, 0, 0.85);
+      border-top: 1px solid var(--muted);
+      z-index: 50;
+    }
+    #statusbar.connected { color: var(--accent); }
+    #statusbar.disconnected { color: #c66; }
+    #statusbar-log {
+      flex: 1;
+      min-width: 0;
+      text-align: left;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #statusbar .log { color: var(--muted); }
+    #statusbar.connected .log { color: var(--fg); }
+    #statusbar-right {
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    #statusbar-conn {
+      display: inline-flex;
+      align-items: center;
+    }
+    #statusbar-conn svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    .statusbar-refresh {
+      margin-left: 0.35rem;
+      padding: 0.2rem;
+      background: transparent;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      vertical-align: middle;
+    }
+    .statusbar-refresh:hover { opacity: 0.9; }
+    .statusbar-refresh:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    body { padding-bottom: 36px; }
+    /* Help modal */
+    #helpOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: var(--spacing);
+    }
+    #helpOverlay.visible { display: flex; }
+    #helpModal {
+      background: var(--bg);
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      max-width: 32rem;
+      width: 100%;
+      max-height: 90vh;
+      overflow: auto;
+      padding: var(--spacing-lg);
+    }
+    #helpModal h2 { margin: 0 0 var(--spacing); font-size: 1.5rem; }
+    #helpModal table { font-size: 1rem; margin-bottom: var(--spacing); }
+    #helpModal th { text-align: left; padding-right: 1rem; }
+    #helpModal kbd {
+      background: var(--muted);
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    #helpModal a { color: var(--accent); }
+    #helpModal .help-close {
+      margin-top: var(--spacing);
+      width: 100%;
+    }
+    /* Voice enrollment modal */
+    #enrollOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 210;
+      align-items: center;
+      justify-content: center;
+      padding: var(--spacing);
+    }
+    #enrollOverlay.visible { display: flex; }
+    #enrollModal {
+      background: var(--bg);
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      max-width: 28rem;
+      width: 100%;
+      padding: var(--spacing-lg);
+    }
+    #enrollModal h2 { margin: 0 0 var(--spacing); font-size: 1.5rem; }
+    #enrollProgress { font-size: 1rem; color: var(--muted); margin-bottom: var(--spacing); }
+    #enrollState {
+      margin-bottom: var(--spacing);
+      padding: var(--spacing);
+      border-radius: var(--radius);
+      font-weight: 600;
+      font-size: 1.125rem;
+      text-align: center;
+    }
+    #enrollState.listening {
+      background: rgba(0, 100, 200, 0.25);
+      border: 2px solid rgba(0, 100, 200, 0.6);
+      color: #8cf;
+    }
+    #enrollState.speaking {
+      background: rgba(0, 180, 80, 0.25);
+      border: 2px solid var(--accent);
+      color: var(--accent);
+    }
+    #enrollState.uploading { background: var(--muted); color: var(--fg); border: 2px solid var(--muted); }
+    #enrollState.error { background: rgba(180, 60, 60, 0.25); border: 2px solid #c66; color: #c66; }
+    #enrollSentence {
+      font-size: 1.25rem;
+      line-height: 1.5;
+      margin-bottom: var(--spacing-lg);
+      min-height: 3em;
+      padding: var(--spacing);
+      border: 1px solid var(--muted);
+      border-radius: var(--radius);
+    }
+    #enrollModal .enroll-actions { display: flex; gap: var(--spacing); margin-top: var(--spacing); }
+    #enrollModal .enroll-actions button { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="helpOverlay" class="help-overlay" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle" aria-hidden="true">
+    <div id="helpModal">
+      <h2 id="helpModalTitle">Quick reference</h2>
+      <table>
+        <tbody>
+          <tr><th><kbd>H</kbd> or <kbd>h</kbd></th><td>Show this help</td></tr>
+          <tr><th><kbd>Esc</kbd></th><td>Close help (when open)</td></tr>
+          <tr><th>Tab</th><td>Move focus (skip link, nav, main content)</td></tr>
+          <tr><th>Nav buttons</th><td><kbd>Enter</kbd> or <kbd>Space</kbd> to switch section (Main, History, Settings, Documents, Training, Calibration)</td></tr>
+          <tr><th>History rows</th><td>Click or <kbd>Enter</kbd>/<kbd>Space</kbd> to select row for correction</td></tr>
+          <tr><th>Status bar</th><td>Refresh icon: reconnect WebSocket when disconnected</td></tr>
+          <tr><th>Modules</th><td>Speech, Web, RAG: enable after connecting to server</td></tr>
+          <tr><th>Server not connecting?</th><td>Run <code>./talkie start web</code>, open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a>, then use the status bar refresh. Check <code>.talkie-web.log</code> if it still fails.</td></tr>
+        </tbody>
+      </table>
+      <button type="button" id="helpClose" class="help-close">Close</button>
+    </div>
+  </div>
+  <div id="enrollOverlay" role="dialog" aria-modal="true" aria-labelledby="enrollModalTitle" aria-hidden="true">
+    <div id="enrollModal">
+      <h2 id="enrollModalTitle">Voice enrollment</h2>
+      <p id="enrollProgress" aria-live="polite">Sentence 1 of 4</p>
+      <div id="enrollState" class="listening" role="status" aria-live="polite">Listen</div>
+      <p id="enrollSentence" aria-live="polite"></p>
+      <div class="enroll-actions">
+        <button type="button" id="enrollCancel">Cancel</button>
+        <button type="button" id="enrollDoneSpeaking" style="display:none;">Done speaking</button>
+      </div>
+    </div>
+  </div>
+  <a href="#panel-main" class="skip-link">Skip to main content</a>
+  <h1 id="main-heading">Talkie</h1>
+  <nav role="navigation" aria-label="Sections">
+    <button type="button" data-tab="main" aria-current="true">Main</button>
+    <button type="button" data-tab="history" aria-current="false">History</button>
+    <button type="button" data-tab="settings" aria-current="false">Settings</button>
+    <button type="button" data-tab="documents" aria-current="false">Documents</button>
+    <button type="button" data-tab="training" aria-current="false">Training</button>
+    <button type="button" data-tab="calibration" aria-current="false">Calibration</button>
+  </nav>
+
+  <main id="panel-main" class="panel active" aria-label="Main" tabindex="-1">
+    <div class="controls" role="group" aria-label="Modules">
+      <button type="button" id="btnModuleSpeech" data-module="speech" title="Connect to server to enable" aria-describedby="moduleHint">Speech</button>
+      <button type="button" id="btnModuleWeb" data-module="web" title="Connect to server to enable" aria-describedby="moduleHint">Web</button>
+      <button type="button" id="btnModuleRag" data-module="rag" title="Connect to server to enable" aria-describedby="moduleHint">RAG</button>
+    </div>
+    <p id="moduleHint" class="status-hint" role="status">Connect to server to enable modules. Use the refresh icon in the status bar when connected, or open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a> and run <code>./talkie start web</code> if the server is not running.</p>
+    <div id="status">Stopped</div>
+    <div id="statusHint" class="status-hint" style="display:none;">WebSocket failed. Start the server: <code>./talkie start web</code> then open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a> (or <a href="http://localhost:8765">http://localhost:8765</a>).</div>
+    <div id="response" aria-live="polite"></div>
+    <div id="volumeBar"><div id="volumeBarFill"></div></div>
+    <div id="debug" aria-live="polite"></div>
+  </main>
+
+  <div id="panel-history" class="panel">
+    <p>Recent interactions. Select a row to edit correction.</p>
+    <table id="historyTable">
+      <thead><tr><th>Time</th><th>You said</th><th>Response</th><th>Corrected</th><th>Use for learning</th></tr></thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+    <div class="form-row">
+      <label>Edit response (saved as correction)</label>
+      <textarea id="historyCorrected" placeholder="Select a row and edit..."></textarea>
+    </div>
+    <button type="button" id="historySaveCorrection">Save correction</button>
+  </div>
+
+  <div id="panel-settings" class="panel">
+    <div class="form-row"><label>User context (optional)</label><textarea id="settingsUserContext" placeholder="e.g. PhD, ex-tenured professor..."></textarea></div>
+    <div class="form-row"><label>TTS voice</label><select id="settingsVoice"></select></div>
+    <button type="button" id="settingsSave">Save</button>
+  </div>
+
+  <div id="panel-documents" class="panel">
+    <p>Add documents to vectorize for RAG.</p>
+    <div class="file-wrap">
+      <input type="file" id="documentsFiles" multiple accept=".pdf,.txt" aria-label="Choose PDF or text files">
+      <label for="documentsFiles">Choose files</label>
+    </div>
+    <button type="button" id="documentsUpload">Upload and vectorize</button>
+    <button type="button" id="documentsRefresh">Refresh list</button>
+    <ul id="documentsList" class="list"></ul>
+  </div>
+
+  <div id="panel-training" class="panel">
+    <p>Record facts for the LLM (e.g. "Star is my dog"). Start listening on Main, then toggle Record and speak.</p>
+    <button type="button" id="trainingRecord" class="toggle">Record training sentence</button>
+    <p id="trainingStatus">Recording off.</p>
+    <ul id="trainingList" class="list"></ul>
+  </div>
+
+  <div id="panel-calibration" class="panel">
+    <p id="calibrationMessage" class="status-hint" role="status" aria-live="polite"></p>
+    <section id="calibrationVoiceSection" aria-labelledby="calibrationVoiceHeading">
+      <h2 id="calibrationVoiceHeading" style="font-size:1.25rem;margin:0 0 0.5rem;">Voice enrollment</h2>
+      <p id="calibrationVoiceStatus" class="status-hint">Voice enrolled: —</p>
+      <div class="controls">
+        <button type="button" id="calibrationVoiceEnroll">Enroll voice</button>
+        <button type="button" id="calibrationVoiceClear">Clear voice</button>
+      </div>
+      <p id="calibrationVoiceHint" class="status-hint">Enroll: when you click Enroll voice, a modal will guide you through several sentences. The app will speak each sentence; then you repeat it. Requires mic access.</p>
+    </section>
+    <section id="calibrationSensitivitySection" aria-labelledby="calibrationSensitivityHeading">
+      <h2 id="calibrationSensitivityHeading" style="font-size:1.25rem;margin:1.5rem 0 0.5rem;">Volume and pause</h2>
+      <div class="form-row"><label>Sensitivity</label><input type="number" id="calibrationSensitivity" min="0.5" max="10" step="0.25" value="3"></div>
+      <div class="form-row"><label>Chunk duration (sec)</label><input type="number" id="calibrationChunkSec" min="4" max="15" step="0.5" value="5"></div>
+      <div class="form-row"><label>Min transcription length</label><input type="number" id="calibrationMinLen" min="0" max="20" value="3"></div>
+      <button type="button" id="calibrationSave">Save (restart app to apply)</button>
+    </section>
+  </div>
+
+  <div id="statusbar" class="disconnected" role="status" aria-live="polite"><span id="statusbar-log" class="log" aria-hidden="true"></span><span id="statusbar-right"><span id="statusbar-conn" role="img" aria-label="Web UI: disconnected" title="Web UI: disconnected"></span><button type="button" id="statusbar-refresh" class="statusbar-refresh" aria-label="Reconnect" title="Reconnect"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button></span></div>
+
+  <script>
+    (function () {
+      // Opened from file:// — server not involved; WebSocket to 127.0.0.1 will fail. Tell user to use the server URL.
+      if (location.protocol === 'file:') {
+        var banner = document.createElement('div');
+        banner.style.cssText = 'background:#333;color:#0c6;padding:0.75rem 1rem;margin:-1rem -1rem 1rem -1rem;font-size:0.95rem;';
+        banner.innerHTML = 'This page was opened as a file. Start the server and open in browser: <code style="background:#222;padding:0.2rem 0.5rem;">./talkie start web</code> then go to <a href="http://127.0.0.1:8765" style="color:#0c6;">http://127.0.0.1:8765</a>';
+        document.body.insertBefore(banner, document.body.firstChild);
+      }
+      // 0.0.0.0 is a server bind address; browsers often cannot connect to it (WS code 1006). Redirect to 127.0.0.1.
+      if (location.hostname === '0.0.0.0') {
+        location.replace(location.protocol + '//127.0.0.1' + (location.port ? ':' + location.port : '') + location.pathname + location.search + location.hash);
+        return;
+      }
+      const WS_URL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+      let ws = null;
+      let stream = null;
+      let audioContext = null;
+      let processor = null;
+      let workletNode = null;
+      let source = null;
+      const TARGET_SAMPLE_RATE = 16000;
+      const CHUNK_MS = 100;
+      const elStatus = document.getElementById('status');
+      const elStatusHint = document.getElementById('statusHint');
+      const elStatusbar = document.getElementById('statusbar');
+      const elResponse = document.getElementById('response');
+      const elVolume = document.getElementById('volumeBarFill');
+      const elDebug = document.getElementById('debug');
+      const MAX_RECONNECT_ATTEMPTS = 10;
+      const STATUSBAR_LOG_MAX = 72;
+      const MODULES = ['speech', 'web', 'rag'];
+      let reconnectAttempts = 0;
+      let reconnectTimer = null;
+      let lastLogMessage = '';
+      let connectionLabel = 'Web UI: disconnected';
+      let statusbarClass = 'disconnected';
+      let activeModule = null;
+
+      var ICON_CONNECTED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>';
+      var ICON_DISCONNECTED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>';
+      var ICON_CONNECTING = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+      function updateStatusbar() {
+        const connEl = document.getElementById('statusbar-conn');
+        const logEl = document.getElementById('statusbar-log');
+        const refreshBtn = document.getElementById('statusbar-refresh');
+        if (connEl) {
+          connEl.setAttribute('aria-label', connectionLabel);
+          connEl.setAttribute('title', connectionLabel);
+          if (statusbarClass === 'connected') connEl.innerHTML = ICON_CONNECTED;
+          else if (connectionLabel.indexOf('connecting') !== -1) connEl.innerHTML = ICON_CONNECTING;
+          else connEl.innerHTML = ICON_DISCONNECTED;
+        }
+        if (logEl) {
+          if (lastLogMessage) {
+            logEl.textContent = (lastLogMessage.length > STATUSBAR_LOG_MAX ? '\u2026' + lastLogMessage.slice(-STATUSBAR_LOG_MAX) : lastLogMessage);
+            logEl.setAttribute('aria-hidden', 'false');
+          } else {
+            logEl.textContent = '';
+            logEl.setAttribute('aria-hidden', 'true');
+          }
+        }
+        if (elStatusbar) elStatusbar.className = statusbarClass;
+        if (refreshBtn) refreshBtn.style.display = (statusbarClass === 'disconnected' ? 'inline-flex' : 'none');
+      }
+
+      function setLastLog(msg) {
+        lastLogMessage = (msg || '').trim();
+        updateStatusbar();
+      }
+
+      function setConnected() {
+        elStatus.textContent = 'Connected';
+        elStatusHint.style.display = 'none';
+        var moduleHintEl = document.getElementById('moduleHint');
+        if (moduleHintEl) moduleHintEl.style.display = 'none';
+        reconnectAttempts = 0;
+        connectionLabel = 'Web UI: connected';
+        statusbarClass = 'connected';
+        updateStatusbar();
+        MODULES.forEach(function (m) {
+          var btn = document.getElementById('btnModule' + m.charAt(0).toUpperCase() + m.slice(1));
+          if (btn) { btn.disabled = false; btn.removeAttribute('title'); }
+        });
+      }
+
+      function connect() {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        elStatusHint.style.display = 'none';
+        elStatus.textContent = 'Connecting...';
+        connectionLabel = 'Web UI: connecting…';
+        statusbarClass = '';
+        updateStatusbar();
+        ws = new WebSocket(WS_URL);
+        ws.onopen = function () {
+          setConnected();
+        };
+        ws.onerror = function (e) {
+          console.warn('WebSocket error', e);
+          var errMsg = 'WS error: ' + (e.message || 'see console');
+          if (elDebug) elDebug.appendChild(document.createTextNode(errMsg + '\n'));
+          setLastLog(errMsg);
+        };
+        ws.onclose = function (ev) {
+          var msg = 'code=' + (ev.code !== undefined ? ev.code : '?') + (ev.reason ? ' reason=' + ev.reason : '');
+          console.warn('WebSocket closed', msg);
+          var closedMsg = 'WS closed: ' + msg;
+          if (elDebug) elDebug.appendChild(document.createTextNode(closedMsg + '\n'));
+          connectionLabel = 'Web UI: disconnected';
+          statusbarClass = 'disconnected';
+          setLastLog(closedMsg);
+          stopCapture();
+          elStatusHint.style.display = '';
+          var moduleHintEl = document.getElementById('moduleHint');
+          if (moduleHintEl) moduleHintEl.style.display = 'block';
+          if (ev.code === 1006) {
+            elStatus.textContent = 'Server not reachable';
+            elStatusHint.style.display = '';
+          }
+          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts += 1;
+            const delay = Math.min(2000 * Math.pow(1.5, reconnectAttempts - 1), 15000);
+            if (ev.code !== 1006) elStatus.textContent = 'Disconnected. Reconnecting in ' + Math.round(delay / 1000) + 's...';
+            reconnectTimer = setTimeout(function () { connect(); }, delay);
+          } else {
+            if (ev.code !== 1006) elStatus.textContent = 'Disconnected';
+          }
+        };
+        ws.onmessage = function (ev) {
+          if (typeof ev.data !== 'string') return;
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'status') elStatus.textContent = msg.value;
+            else if (msg.type === 'response') {
+              elResponse.textContent = msg.text || '';
+              elResponse.classList.remove('error');
+              if (msg.text && typeof window.speechSynthesis !== 'undefined') {
+                window.speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance(msg.text);
+                if (window.ttsVoice) u.voice = window.ttsVoice;
+                window.speechSynthesis.speak(u);
+              }
+            } else if (msg.type === 'error') { elResponse.textContent = msg.message || ''; elResponse.classList.add('error'); }
+            else if (msg.type === 'volume') elVolume.style.width = (Math.min(1, Math.max(0, msg.value)) * 100) + '%';
+            else if (msg.type === 'debug') {
+              var debugMsg = msg.message || '';
+              elDebug.textContent = (elDebug.textContent + '\n' + debugMsg).trim().slice(-8000);
+              elDebug.scrollTop = elDebug.scrollHeight;
+              setLastLog(debugMsg);
+            } else if (msg.type === 'training_fact_added') {
+              if (typeof onTrainingFactAdded === 'function') onTrainingFactAdded();
+            }
+          } catch (e) {}
+        };
+      }
+
+      function sendStart(sampleRate, module) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ action: 'start', sample_rate: sampleRate || TARGET_SAMPLE_RATE, module: module || 'speech' }));
+      }
+
+      function sendStop() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ action: 'stop' }));
+      }
+
+      function sendAudioChunk(int16Array) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(int16Array.buffer);
+      }
+
+      function setModuleButtonsState(active) {
+        var connected = !!(ws && ws.readyState === WebSocket.OPEN);
+        var moduleHintEl = document.getElementById('moduleHint');
+        if (moduleHintEl) moduleHintEl.style.display = connected ? 'none' : 'block';
+        MODULES.forEach(function (m) {
+          var btn = document.getElementById('btnModule' + m.charAt(0).toUpperCase() + m.slice(1));
+          if (btn) {
+            btn.classList.toggle('active', active === m);
+            btn.disabled = !connected;
+            btn.title = connected ? '' : 'Connect to server to enable';
+          }
+        });
+      }
+
+      function startCapture(module) {
+        if (activeModule !== null) return;
+        if (!module || MODULES.indexOf(module) === -1) module = 'speech';
+        const constraints = { audio: { channelCount: 1, sampleRate: TARGET_SAMPLE_RATE } };
+        navigator.mediaDevices.getUserMedia(constraints).then(function (mediaStream) {
+          stream = mediaStream;
+          audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET_SAMPLE_RATE });
+          const rate = audioContext.sampleRate;
+          function useWorklet() {
+            return audioContext.audioWorklet.addModule(location.origin + '/audio-worklet.js').then(function () {
+              workletNode = new AudioWorkletNode(audioContext, 'talkie-audio', {
+                processorOptions: { sampleRate: rate, targetRate: TARGET_SAMPLE_RATE }
+              });
+              workletNode.port.onmessage = function (e) {
+                if (e.data && e.data.chunk) sendAudioChunk(e.data.chunk);
+              };
+              source = audioContext.createMediaStreamSource(stream);
+              source.connect(workletNode);
+              workletNode.connect(audioContext.destination);
+              return true;
+            });
+          }
+          function useScriptProcessor() {
+            const desiredSize = Math.max(256, Math.floor((CHUNK_MS / 1000) * rate));
+            const VALID_BUFFER_SIZES = [256, 512, 1024, 2048, 4096, 8192, 16384];
+            const bufferSize = VALID_BUFFER_SIZES.reduce(function (prev, curr) {
+              return Math.abs(curr - desiredSize) < Math.abs(prev - desiredSize) ? curr : prev;
+            });
+            processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+            source = audioContext.createMediaStreamSource(stream);
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+            const ratio = rate / TARGET_SAMPLE_RATE;
+            processor.onaudioprocess = function (e) {
+              const input = e.inputBuffer.getChannelData(0);
+              const outLength = Math.floor(input.length / ratio);
+              const out = new Int16Array(outLength);
+              for (let i = 0; i < outLength; i++) {
+                const v = input[Math.floor(i * ratio)];
+                out[i] = Math.max(-32768, Math.min(32767, v * 32767));
+              }
+              sendAudioChunk(out);
+            };
+            return Promise.resolve(true);
+          }
+          useWorklet().catch(function () { return useScriptProcessor(); }).then(function () {
+            sendStart(rate, module);
+            activeModule = module;
+            setModuleButtonsState(module);
+          });
+        }).catch(function (err) {
+          elStatus.textContent = 'Mic error: ' + (err.message || 'denied');
+        });
+      }
+
+      function stopCapture() {
+        sendStop();
+        if (workletNode) { try { workletNode.disconnect(); } catch (e) {} workletNode = null; }
+        if (processor) { try { processor.disconnect(); } catch (e) {} processor = null; }
+        if (source) { try { source.disconnect(); } catch (e) {} source = null; }
+        if (audioContext) { try { audioContext.close(); } catch (e) {} audioContext = null; }
+        if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+        activeModule = null;
+        setModuleButtonsState(null);
+      }
+
+      (function () {
+        var moduleHintEl = document.getElementById('moduleHint');
+        if (moduleHintEl) moduleHintEl.style.display = 'block';
+      })();
+      MODULES.forEach(function (m) {
+        var btn = document.getElementById('btnModule' + m.charAt(0).toUpperCase() + m.slice(1));
+        if (!btn) return;
+        btn.disabled = true;
+        btn.addEventListener('click', function () {
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            elStatus.textContent = 'Connect to server first (use refresh in status bar).';
+            return;
+          }
+          if (activeModule === m) {
+            stopCapture();
+            return;
+          }
+          if (activeModule !== null) stopCapture();
+          startCapture(m);
+        });
+      });
+      var statusbarRefresh = document.getElementById('statusbar-refresh');
+      if (statusbarRefresh) statusbarRefresh.addEventListener('click', function () {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        reconnectAttempts = 0;
+        elStatus.textContent = 'Connecting...';
+        connect();
+      });
+      connect();
+
+      (function () {
+        function getHelpOverlay() { return document.getElementById('helpOverlay'); }
+        function getHelpClose() { return document.getElementById('helpClose'); }
+        function showHelp() {
+          var helpOverlay = getHelpOverlay();
+          if (!helpOverlay) return;
+          helpOverlay.classList.add('visible');
+          helpOverlay.setAttribute('aria-hidden', 'false');
+          var btn = getHelpClose();
+          if (btn) btn.focus();
+        }
+        function hideHelp() {
+          var helpOverlay = getHelpOverlay();
+          if (!helpOverlay) return;
+          helpOverlay.classList.remove('visible');
+          helpOverlay.setAttribute('aria-hidden', 'true');
+        }
+        function onKeyDown(e) {
+          var tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+          var key = (e.key || '').toLowerCase();
+          if (key === 'h') {
+            e.preventDefault();
+            var overlay = getHelpOverlay();
+            if (overlay && overlay.classList.contains('visible')) hideHelp();
+            else showHelp();
+            return;
+          }
+          if ((e.key === 'Escape' || e.key === 'Esc') && getHelpOverlay() && getHelpOverlay().classList.contains('visible')) {
+            e.preventDefault();
+            hideHelp();
+          }
+        }
+        window.addEventListener('keydown', onKeyDown, true);
+        var helpClose = getHelpClose();
+        if (helpClose) helpClose.addEventListener('click', hideHelp);
+        var helpOverlay = getHelpOverlay();
+        if (helpOverlay) {
+          helpOverlay.addEventListener('click', function (e) {
+            if (e.target === helpOverlay) hideHelp();
+          });
+        }
+      })();
+
+      function api(path, opts) {
+        opts = opts || {};
+        const url = (path.startsWith('http') ? path : (location.origin + path));
+        return fetch(url, { headers: opts.headers || { 'Content-Type': 'application/json' }, ...opts }).then(function (r) {
+          if (!r.ok) {
+            return r.json().catch(function () { return {}; }).then(function (body) { throw new Error(body.error || String(r.status)); });
+          }
+          return r.json().catch(function () { return {}; });
+        });
+      }
+
+      let selectedHistoryId = null;
+      function switchTab(tabName) {
+        document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
+        document.getElementById('panel-' + tabName).classList.add('active');
+        document.querySelectorAll('nav [data-tab]').forEach(function (b) {
+          b.setAttribute('aria-current', b.getAttribute('data-tab') === tabName ? 'true' : 'false');
+        });
+        if (tabName === 'history') loadHistory();
+        if (tabName === 'settings') loadSettings();
+        if (tabName === 'documents') loadDocuments();
+        if (tabName === 'training') loadTraining();
+        if (tabName === 'calibration') loadCalibration();
+      }
+      document.querySelectorAll('nav [data-tab]').forEach(function (btn) {
+        btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
+        btn.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(btn.getAttribute('data-tab')); }
+        });
+      });
+
+      function loadHistory() {
+        api('/api/history').then(function (data) {
+          const tbody = document.getElementById('historyBody');
+          tbody.innerHTML = '';
+          (data.items || []).forEach(function (r) {
+            const tr = document.createElement('tr');
+            tr.dataset.id = r.id;
+            tr.tabIndex = 0;
+            tr.setAttribute('role', 'button');
+            tr.setAttribute('aria-label', 'Select row to edit correction');
+            tr.innerHTML = '<td>' + (r.created_at || '').slice(0, 19) + '</td><td>' + escapeHtml(r.original_transcription || '') + '</td><td>' + escapeHtml(r.llm_response || '') + '</td><td>' + escapeHtml(r.corrected_response || '') + '</td><td><input type="checkbox" ' + (r.exclude_from_profile ? '' : 'checked') + ' data-id="' + r.id + '" class="history-use-learning"></td>';
+            function selectRow() {
+              document.querySelectorAll('#historyBody tr').forEach(function (row) { row.classList.remove('selected'); });
+              tr.classList.add('selected');
+              selectedHistoryId = r.id;
+              document.getElementById('historyCorrected').value = r.corrected_response || '';
+            }
+            tr.addEventListener('click', function (ev) {
+              if (ev.target.classList.contains('history-use-learning')) return;
+              selectRow();
+            });
+            tr.addEventListener('keydown', function (e) {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRow(); }
+            });
+            tbody.appendChild(tr);
+          });
+        }).catch(function () {});
+      }
+      function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+      document.getElementById('historySaveCorrection').addEventListener('click', function () {
+        if (selectedHistoryId == null) return;
+        const corrected = document.getElementById('historyCorrected').value;
+        api('/api/history/' + selectedHistoryId, { method: 'PATCH', body: JSON.stringify({ corrected_response: corrected }) }).then(function () { loadHistory(); }).catch(function () {});
+      });
+      document.getElementById('historyBody').addEventListener('change', function (ev) {
+        if (ev.target.classList.contains('history-use-learning')) {
+          const id = parseInt(ev.target.dataset.id, 10);
+          const exclude = !ev.target.checked;
+          api('/api/history/' + id, { method: 'PATCH', body: JSON.stringify({ exclude_from_profile: exclude }) }).then(function () { loadHistory(); }).catch(function () {});
+        }
+      });
+
+      function loadSettings() {
+        api('/api/settings').then(function (data) {
+          document.getElementById('settingsUserContext').value = data.user_context || '';
+          const voice = data.tts_voice || 'Daniel';
+          api('/api/settings/voices').then(function (vdata) {
+            const sel = document.getElementById('settingsVoice');
+            sel.innerHTML = '';
+            (vdata.voices || ['Daniel']).forEach(function (v) {
+              const opt = document.createElement('option'); opt.value = v; opt.textContent = v; if (v === voice) opt.selected = true; sel.appendChild(opt);
+            });
+            if (typeof window.speechSynthesis !== 'undefined') {
+              const voices = window.speechSynthesis.getVoices();
+              const v = voices.find(function (x) { return x.name === voice; }) || voices.find(function (x) { return x.name.indexOf(voice) >= 0; });
+              window.ttsVoice = v || null;
+            }
+          });
+        });
+      }
+      document.getElementById('settingsSave').addEventListener('click', function () {
+        const user_context = document.getElementById('settingsUserContext').value;
+        const tts_voice = document.getElementById('settingsVoice').value;
+        api('/api/settings', { method: 'PUT', body: JSON.stringify({ user_context: user_context, tts_voice: tts_voice }) }).then(function () {
+          if (typeof window.speechSynthesis !== 'undefined') {
+            const voices = window.speechSynthesis.getVoices();
+            const v = voices.find(function (x) { return x.name === tts_voice; }) || voices.find(function (x) { return x.name.indexOf(tts_voice) >= 0; });
+            window.ttsVoice = v || null;
+          }
+        });
+      });
+
+      function loadDocuments() {
+        api('/api/documents').then(function (data) {
+          const ul = document.getElementById('documentsList');
+          ul.innerHTML = '';
+          (data.sources || []).forEach(function (src) {
+            const li = document.createElement('li');
+            li.innerHTML = escapeHtml(src) + ' <button type="button" class="doc-remove" data-source="' + escapeHtml(src) + '">Remove</button>';
+            ul.appendChild(li);
+          });
+        });
+      }
+      document.getElementById('documentsUpload').addEventListener('click', function () {
+        const input = document.getElementById('documentsFiles');
+        if (!input.files || !input.files.length) return;
+        const fd = new FormData();
+        for (let i = 0; i < input.files.length; i++) fd.append('files', input.files[i]);
+        fetch(location.origin + '/api/documents/upload', { method: 'POST', body: fd }).then(function (r) { return r.json(); }).then(function () { loadDocuments(); }).catch(function () {});
+      });
+      document.getElementById('documentsRefresh').addEventListener('click', loadDocuments);
+      document.getElementById('documentsList').addEventListener('click', function (ev) {
+        if (ev.target.classList.contains('doc-remove')) {
+          const src = ev.target.dataset.source;
+          api('/api/documents/' + encodeURIComponent(src), { method: 'DELETE' }).then(function () { loadDocuments(); }).catch(function () {});
+        }
+      });
+
+      function loadTraining() {
+        api('/api/training').then(function (data) {
+          const ul = document.getElementById('trainingList');
+          ul.innerHTML = '';
+          (data.items || []).forEach(function (item) {
+            const li = document.createElement('li');
+            li.textContent = item.text;
+            const delBtn = document.createElement('button'); delBtn.type = 'button'; delBtn.textContent = 'Delete'; delBtn.dataset.id = item.id;
+            delBtn.style.marginLeft = '0.5rem';
+            li.appendChild(delBtn);
+            ul.appendChild(li);
+          });
+        });
+      }
+      document.getElementById('trainingList').addEventListener('click', function (ev) {
+        if (ev.target.type === 'button' && ev.target.dataset.id) {
+          api('/api/training/' + ev.target.dataset.id, { method: 'DELETE' }).then(function () { loadTraining(); }).catch(function () {});
+        }
+      });
+      const trainingRecordBtn = document.getElementById('trainingRecord');
+      trainingRecordBtn.addEventListener('click', function () {
+        const on = trainingRecordBtn.classList.toggle('active');
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ action: 'training_mode', on: on }));
+        document.getElementById('trainingStatus').textContent = on ? 'Recording. Say a sentence.' : 'Recording off.';
+      });
+
+      function setCalibrationMessage(msg, isError) {
+        var el = document.getElementById('calibrationMessage');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.classList.toggle('error', !!isError);
+      }
+      function loadCalibration() {
+        setCalibrationMessage('');
+        var voiceStatusEl = document.getElementById('calibrationVoiceStatus');
+        var enrollBtn = document.getElementById('calibrationVoiceEnroll');
+        var clearBtn = document.getElementById('calibrationVoiceClear');
+        Promise.all([api('/api/settings'), api('/api/calibration/steps').catch(function () { return { steps: [] }; })])
+          .then(function (results) {
+            var data = results[0];
+            if (data.calibration_sensitivity != null && data.calibration_sensitivity !== '') document.getElementById('calibrationSensitivity').value = data.calibration_sensitivity;
+            if (data.calibration_chunk_duration_sec != null && data.calibration_chunk_duration_sec !== '') document.getElementById('calibrationChunkSec').value = data.calibration_chunk_duration_sec;
+            if (data.calibration_min_transcription_length != null && data.calibration_min_transcription_length !== '') document.getElementById('calibrationMinLen').value = data.calibration_min_transcription_length;
+            if (voiceStatusEl) voiceStatusEl.textContent = 'Voice enrolled: ' + (data.voice_profile_enrolled === 'true' ? 'Yes' : 'No');
+            if (enrollBtn) enrollBtn.disabled = false;
+            if (clearBtn) clearBtn.disabled = false;
+          })
+          .catch(function (err) {
+            setCalibrationMessage('Failed to load calibration: ' + (err.message || err), true);
+            if (voiceStatusEl) voiceStatusEl.textContent = 'Voice enrolled: —';
+          });
+      }
+      function recordForEnrollment(seconds, onProgress, onDone, control) {
+        control = control || {};
+        var TARGET = 16000;
+        var constraints = { audio: { channelCount: 1, sampleRate: TARGET } };
+        navigator.mediaDevices.getUserMedia(constraints).then(function (mediaStream) {
+          var audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET });
+          var rate = audioContext.sampleRate;
+          var chunks = [];
+          var startTime = Date.now();
+          var stopped = false;
+          var speechStartTime = null;
+          var silenceStartTime = null;
+          var hadEnoughSpeech = false;
+          var enrollNode = null;
+          var enrollSource = null;
+          var processor = null;
+          var ratio = rate / TARGET;
+          function finish(result) {
+            if (stopped) return;
+            stopped = true;
+            try { if (enrollNode) enrollNode.disconnect(); } catch (e) {}
+            try { if (processor) processor.disconnect(); } catch (e) {}
+            try { if (enrollSource) enrollSource.disconnect(); } catch (e) {}
+            try { audioContext.close(); } catch (e) {}
+            mediaStream.getTracks().forEach(function (t) { t.stop(); });
+            if (typeof onDone === 'function') onDone(null, result);
+          }
+          function onChunk(out, rms) {
+            if (stopped) return;
+            if (control.stopRequested) {
+              var totalLen = chunks.reduce(function (sum, c) { return sum + c.length; }, 0);
+              var result = totalLen > 0 ? new Int16Array(totalLen) : null;
+              if (result) { var offset = 0; chunks.forEach(function (c) { result.set(c, offset); offset += c.length; }); }
+              finish(result);
+              return;
+            }
+            chunks.push(out);
+            var now = Date.now();
+            var elapsed = (now - startTime) / 1000;
+            if (rms > ENROLL_SPEECH_RMS_THRESHOLD) {
+              if (speechStartTime === null) speechStartTime = now;
+              else if (now - speechStartTime >= ENROLL_MIN_SPEECH_MS) hadEnoughSpeech = true;
+              silenceStartTime = null;
+            } else {
+              speechStartTime = null;
+              if (hadEnoughSpeech) {
+                if (silenceStartTime === null) silenceStartTime = now;
+                else if (now - silenceStartTime >= ENROLL_SILENCE_AFTER_SPEECH_MS) {
+                  var totalLen = chunks.reduce(function (sum, c) { return sum + c.length; }, 0);
+                  var result = new Int16Array(totalLen);
+                  var offset = 0;
+                  chunks.forEach(function (c) { result.set(c, offset); offset += c.length; });
+                  finish(result);
+                  return;
+                }
+              }
+            }
+            if (typeof onProgress === 'function') onProgress(elapsed, seconds);
+            if (elapsed >= seconds) {
+              var totalLen = chunks.reduce(function (sum, c) { return sum + c.length; }, 0);
+              var result = new Int16Array(totalLen);
+              var offset = 0;
+              chunks.forEach(function (c) { result.set(c, offset); offset += c.length; });
+              finish(result);
+            }
+          }
+          function useWorklet() {
+            return audioContext.audioWorklet.addModule(location.origin + '/audio-worklet.js').then(function () {
+              enrollNode = new AudioWorkletNode(audioContext, 'talkie-audio', {
+                processorOptions: { sampleRate: rate, targetRate: TARGET }
+              });
+              enrollNode.port.onmessage = function (e) {
+                if (e.data && e.data.chunk != null) onChunk(e.data.chunk, e.data.rms || 0);
+              };
+              enrollSource = audioContext.createMediaStreamSource(mediaStream);
+              enrollSource.connect(enrollNode);
+              enrollNode.connect(audioContext.destination);
+            });
+          }
+          function useScriptProcessor() {
+            var desiredSize = Math.max(256, Math.floor(0.1 * rate));
+            var VALID_BUFFER_SIZES = [256, 512, 1024, 2048, 4096, 8192, 16384];
+            var bufferSize = VALID_BUFFER_SIZES.reduce(function (prev, curr) { return Math.abs(curr - desiredSize) < Math.abs(prev - desiredSize) ? curr : prev; });
+            processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+            enrollSource = audioContext.createMediaStreamSource(mediaStream);
+            enrollSource.connect(processor);
+            processor.connect(audioContext.destination);
+            processor.onaudioprocess = function (e) {
+              var input = e.inputBuffer.getChannelData(0);
+              var sumSq = 0;
+              for (var j = 0; j < input.length; j++) sumSq += input[j] * input[j];
+              var rms = Math.sqrt(sumSq / input.length);
+              var outLength = Math.floor(input.length / ratio);
+              var out = new Int16Array(outLength);
+              for (var i = 0; i < outLength; i++) out[i] = Math.max(-32768, Math.min(32767, input[Math.floor(i * ratio)] * 32767));
+              onChunk(out, rms);
+            };
+          }
+          useWorklet().catch(function () { useScriptProcessor(); });
+        }).catch(function (err) { if (typeof onDone === 'function') onDone(err, null); });
+      }
+      var ENROLL_SENTENCES = [
+        'Hello, my name is [your name] and I use this app to talk.',
+        'The quick brown fox jumps over the lazy dog.',
+        'Please respond only when you hear my voice.',
+        'Thank you for learning my voice profile.'
+      ];
+      var ENROLL_SEC_PER_SENTENCE = 60;
+      var ENROLL_SILENCE_AFTER_SPEECH_MS = 1800;
+      var ENROLL_SPEECH_RMS_THRESHOLD = 0.008;
+      var ENROLL_SILENCE_RMS_THRESHOLD = 0.004;
+      var ENROLL_MIN_SPEECH_MS = 400;
+      var enrollOverlay = document.getElementById('enrollOverlay');
+      var enrollProgressEl = document.getElementById('enrollProgress');
+      var enrollStateEl = document.getElementById('enrollState');
+      var enrollSentenceEl = document.getElementById('enrollSentence');
+      function openEnrollModal() {
+        if (enrollOverlay) {
+          enrollOverlay.classList.add('visible');
+          enrollOverlay.setAttribute('aria-hidden', 'false');
+        }
+      }
+      function closeEnrollModal() {
+        if (typeof window._enrollAbort === 'function') {
+          window._enrollAbort();
+          window._enrollAbort = null;
+        }
+        var doneBtn = document.getElementById('enrollDoneSpeaking');
+        if (doneBtn) doneBtn.style.display = 'none';
+        if (enrollOverlay) {
+          enrollOverlay.classList.remove('visible');
+          enrollOverlay.setAttribute('aria-hidden', 'true');
+        }
+        if (typeof window.speechSynthesis !== 'undefined') window.speechSynthesis.cancel();
+        var btn = document.getElementById('calibrationVoiceEnroll');
+        if (btn) btn.disabled = false;
+      }
+      function speakEnrollPrompt(text, onDone) {
+        if (typeof window.speechSynthesis === 'undefined') {
+          if (onDone) setTimeout(onDone, 1500);
+          return;
+        }
+        window.speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance(text);
+        if (window.ttsVoice) u.voice = window.ttsVoice;
+        u.onend = function () { if (onDone) setTimeout(onDone, 400); };
+        u.onerror = function () { if (onDone) setTimeout(onDone, 400); };
+        window.speechSynthesis.speak(u);
+      }
+      document.getElementById('calibrationVoiceEnroll').addEventListener('click', function () {
+        var btn = document.getElementById('calibrationVoiceEnroll');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        setCalibrationMessage('');
+        var aborted = false;
+        var recordedChunks = [];
+        var index = 0;
+        var enrollControl = { stopRequested: false };
+        var enrollDoneBtn = document.getElementById('enrollDoneSpeaking');
+        window._enrollAbort = function () { aborted = true; };
+        openEnrollModal();
+        enrollStateEl.className = 'listening';
+        enrollStateEl.textContent = 'Listen';
+        enrollSentenceEl.textContent = '';
+        enrollProgressEl.textContent = 'Sentence 1 of ' + ENROLL_SENTENCES.length;
+        if (enrollDoneBtn) enrollDoneBtn.style.display = 'none';
+        document.getElementById('enrollCancel').onclick = function () { aborted = true; closeEnrollModal(); setCalibrationMessage('Enrollment cancelled.'); };
+        if (enrollDoneBtn) enrollDoneBtn.onclick = function () { enrollControl.stopRequested = true; };
+        function runNext() {
+          if (aborted) return;
+          if (index >= ENROLL_SENTENCES.length) {
+            var totalLen = recordedChunks.reduce(function (sum, c) { return sum + c.length; }, 0);
+            if (recordedChunks.length === 0 || totalLen < 16000 * 3) {
+              enrollStateEl.className = 'error';
+              enrollStateEl.textContent = 'Not enough audio. Need at least 3 seconds total.';
+              enrollSentenceEl.textContent = '';
+              setTimeout(function () { closeEnrollModal(); setCalibrationMessage('Enrollment cancelled — not enough audio.'); }, 3000);
+              return;
+            }
+            enrollStateEl.className = 'uploading';
+            enrollStateEl.textContent = 'Uploading…';
+            enrollSentenceEl.textContent = '';
+            enrollProgressEl.textContent = 'Sending your voice…';
+            var combined = new Int16Array(totalLen);
+            var offset = 0;
+            recordedChunks.forEach(function (c) { combined.set(c, offset); offset += c.length; });
+            var binary = '';
+            var bytes = new Uint8Array(combined.buffer);
+            for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            var base64 = btoa(binary);
+            api('/api/calibration/voice_enroll', { method: 'POST', body: JSON.stringify({ audio_base64: base64, sample_rate: 16000 }) })
+              .then(function (res) {
+                closeEnrollModal();
+                setCalibrationMessage(res.message || 'Voice enrolled.');
+                loadCalibration();
+              })
+              .catch(function (e) {
+                var msg = (e && e.message) || (e && e.error) || String(e);
+                enrollStateEl.textContent = 'Failed: ' + msg;
+                enrollStateEl.classList.add('error');
+                setCalibrationMessage('Enroll failed: ' + msg, true);
+                setTimeout(function () { closeEnrollModal(); }, 2500);
+              });
+            return;
+          }
+          var sentence = ENROLL_SENTENCES[index];
+          enrollProgressEl.textContent = 'Sentence ' + (index + 1) + ' of ' + ENROLL_SENTENCES.length;
+          enrollSentenceEl.textContent = sentence;
+          enrollStateEl.className = 'listening';
+          enrollStateEl.textContent = 'Listen — we will say the sentence';
+          speakEnrollPrompt(sentence, function () {
+            if (aborted) return;
+            enrollStateEl.className = 'speaking';
+            enrollStateEl.textContent = 'Your turn — speak when ready. We\'ll stop after you finish or in up to 60s.';
+            enrollSentenceEl.textContent = 'Say: \"' + sentence + '\"';
+            if (enrollDoneBtn) enrollDoneBtn.style.display = 'inline-block';
+            enrollControl.stopRequested = false;
+            recordForEnrollment(ENROLL_SEC_PER_SENTENCE, function (elapsed, total) {
+              if (!enrollStateEl.classList.contains('speaking')) return;
+              var left = Math.max(0, Math.ceil(total - elapsed));
+              enrollStateEl.textContent = 'Your turn — speak when ready. ' + left + 's left, or click Done speaking.';
+            }, function (err, int16Array) {
+              if (aborted) return;
+              if (err) {
+                closeEnrollModal();
+                setCalibrationMessage('Mic error: ' + (err.message || err), true);
+                return;
+              }
+              if (enrollDoneBtn) enrollDoneBtn.style.display = 'none';
+              if (!int16Array || int16Array.length < 16000 * 2) {
+                enrollStateEl.textContent = 'Too short — try again for this sentence';
+                enrollStateEl.classList.add('error');
+                setTimeout(function () { runNext(); }, 1500);
+                return;
+              }
+              recordedChunks.push(int16Array);
+              index += 1;
+              runNext();
+            }, enrollControl);
+          });
+        }
+        runNext();
+      });
+      (function () {
+        var overlay = document.getElementById('enrollOverlay');
+        function onKey(e) {
+          if (e.key !== 'Escape' || !overlay || !overlay.classList.contains('visible')) return;
+          e.preventDefault();
+          closeEnrollModal();
+          setCalibrationMessage('Enrollment cancelled.');
+        }
+        window.addEventListener('keydown', onKey, true);
+      })();
+      document.getElementById('calibrationVoiceClear').addEventListener('click', function () {
+        var btn = document.getElementById('calibrationVoiceClear');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        setCalibrationMessage('');
+        api('/api/calibration/voice_clear', { method: 'POST', body: JSON.stringify({}) })
+          .then(function () {
+            setCalibrationMessage('Voice profile cleared.');
+            loadCalibration();
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            setCalibrationMessage('Failed to clear: ' + (err.message || err), true);
+          });
+      });
+      document.getElementById('calibrationSave').addEventListener('click', function () {
+        var sensitivity = parseFloat(document.getElementById('calibrationSensitivity').value);
+        var chunk_sec = parseFloat(document.getElementById('calibrationChunkSec').value);
+        var min_len = parseInt(document.getElementById('calibrationMinLen').value, 10);
+        api('/api/settings', { method: 'PUT', body: JSON.stringify({ calibration_sensitivity: String(sensitivity), calibration_chunk_duration_sec: String(chunk_sec), calibration_min_transcription_length: String(min_len) }) })
+          .then(function () { setCalibrationMessage('Saved. Restart app to apply.'); })
+          .catch(function (err) { setCalibrationMessage('Save failed: ' + (err.message || err), true); });
+      });
+
+      function onTrainingFactAdded() { loadTraining(); }
+    })();
+  </script>
+</body>
+</html>

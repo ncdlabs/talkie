@@ -1,6 +1,7 @@
 """
 Language profile: load user context, corrections, and accepted pairs; build context for the LLM.
 """
+
 from __future__ import annotations
 
 import logging
@@ -8,7 +9,12 @@ import time
 from typing import TYPE_CHECKING
 
 from profile.builder import build_profile_text
-from profile.constants import ACCEPTED_DISPLAY_CAP, ACCEPTED_PROFILE_LIMIT, CORRECTION_DISPLAY_CAP, CORRECTION_PROFILE_LIMIT
+from profile.constants import (
+    ACCEPTED_DISPLAY_CAP,
+    ACCEPTED_PROFILE_LIMIT,
+    CORRECTION_DISPLAY_CAP,
+    CORRECTION_PROFILE_LIMIT,
+)
 
 if TYPE_CHECKING:
     from persistence.history_repo import HistoryRepo
@@ -42,8 +48,16 @@ class LanguageProfile:
         self._training_repo = training_repo
         self._correction_limit = correction_limit
         self._accepted_limit = accepted_limit
-        self._correction_display_cap = correction_display_cap if correction_display_cap is not None else CORRECTION_DISPLAY_CAP
-        self._accepted_display_cap = accepted_display_cap if accepted_display_cap is not None else ACCEPTED_DISPLAY_CAP
+        self._correction_display_cap = (
+            correction_display_cap
+            if correction_display_cap is not None
+            else CORRECTION_DISPLAY_CAP
+        )
+        self._accepted_display_cap = (
+            accepted_display_cap
+            if accepted_display_cap is not None
+            else ACCEPTED_DISPLAY_CAP
+        )
         self._context_cache: str | None = None
         self._context_cache_time: float = 0.0
 

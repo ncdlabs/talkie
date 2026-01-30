@@ -3,6 +3,7 @@ Curate the interactions database: pattern recognition, assign weights to sentenc
 and optionally add/remove (exclude or delete) entries. Heavier-weighted patterns are
 prioritized in the language profile and can be used for fine-tuning.
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,6 +12,7 @@ from collections import defaultdict
 from persistence.history_repo import HistoryRepo
 
 logger = logging.getLogger(__name__)
+
 
 # Normalize text for grouping similar phrases: lowercase, collapse whitespace, strip
 def _normalize_phrase(text: str) -> str:

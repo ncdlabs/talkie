@@ -1,0 +1,28 @@
+# Speech module defaults: audio capture, STT, TTS.
+# Merged with root config.yaml; root overrides these.
+
+audio:
+  device_id: null
+  sample_rate: 16000
+  chunk_duration_sec: 5
+  sensitivity: 3.0
+  auto_sensitivity: false
+  auto_sensitivity_min_level: 0.002
+  auto_sensitivity_max_level: 0.08
+  auto_sensitivity_step: 0.25
+  auto_sensitivity_cooldown_chunks: 3
+
+stt:
+  engine: whisper   # use "vosk" for much faster, lower-latency transcription
+  vosk:
+    model_path: "models/vosk-model-small-en-us-0.15"
+  whisper:
+    model_path: "base"   # base=fastest, small/medium/large=slower, more accurate
+    device: "auto"       # auto | cpu | cuda (auto uses GPU if available)
+    cpu_threads: null    # e.g. 4 or 8 for CPU; null = library default
+    beam_size: 1         # 1=faster, 5=more accurate
+
+tts:
+  enabled: true
+  engine: say
+  voice: Daniel

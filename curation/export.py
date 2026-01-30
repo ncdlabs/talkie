@@ -2,6 +2,7 @@
 Export interactions to JSONL for external fine-tuning (e.g. Ollama create, or Unsloth/LLaMA-Factory).
 High-weight and corrected pairs are preferred for training data.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,7 @@ from persistence.database import get_connection, init_database
 from persistence.history_repo import HistoryRepo
 
 logger = logging.getLogger(__name__)
+
 
 # Format expected by many instruction-tuning tools: instruction, input, output
 def _row_to_instruction_json(
@@ -44,9 +46,13 @@ def export_for_finetuning(
     with instruction, input, output. Returns number of lines written.
     """
     init_database(db_path)
-    connector = lambda: get_connection(db_path)
+
+    def connector():
+        return get_connection(db_path)
+
     repo = HistoryRepo(connector)
     rows = repo.list_for_curation(limit=limit)
+
     # Prefer higher weight and corrected; sort so best examples first
     def sort_key(r: dict) -> tuple:
         w = r.get("weight") or 0
@@ -61,7 +67,9 @@ def export_for_finetuning(
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         for r in rows:
-            out_text = (r.get("corrected_response") or r.get("llm_response") or "").strip()
+            out_text = (
+                r.get("corrected_response") or r.get("llm_response") or ""
+            ).strip()
             if not out_text:
                 continue
             rec = _row_to_instruction_json(

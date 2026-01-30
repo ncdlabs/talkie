@@ -8,7 +8,7 @@ A Python application for laptop or Raspberry Pi that helps people with speech im
 - **Speech recognition**: Local STT (Vosk or Whisper)
 - **Speaker filtering**: Pluggable filter (no-op by default; extensible to verification/diarization)
 - **LLM interaction**: Local Mistral via Ollama for full-sentence responses
-- **Response display**: High-contrast PyQt6 UI with large text
+- **Response display**: Web-based UI with large, high-contrast text (http://localhost:8765)
 - **History**: SQLite storage of transcriptions, LLM responses, and corrections
 - **Correction and personalization**: Edit past responses in the UI; language profile built from corrections, accepted responses, and optional user context (e.g. "PhD, professor at Brown")
 - **Learning profile**: User context (Settings), explicit corrections, and accepted completions are combined so the LLM tailors vocabulary and style; curate which interactions are used for learning (History "Use for learning" checkbox)
@@ -27,20 +27,60 @@ A Python application for laptop or Raspberry Pi that helps people with speech im
 
 ## Setup
 
+The main app uses **Pipfile** for dependencies. Install and run:
+
 ```bash
 pipenv install
-pipenv run python run.py
+pipenv run python run_web.py
 ```
 
-Optional: set `TALKIE_CONFIG` to the path of a different `config.yaml`.
+Note: `requirements.txt` is for the **rifai_scholar_downloader** subproject only; use Pipfile for the Talkie app.
+
+Then open http://localhost:8765. Optional: set `TALKIE_CONFIG` to the path of a different `config.yaml`.
+
+## Service Management
+
+For managing infrastructure services (Consul, KeyDB, HAProxy, etc.):
+
+```bash
+# Start all services
+./talkie start
+
+# Start specific service groups
+./talkie start infrastructure  # Consul, KeyDB, HAProxy, etc.
+./talkie start core            # Ollama, Chroma
+./talkie start modules         # Module servers
+
+# Check status
+./talkie status
+
+# View logs
+./talkie logs consul-server --follow
+
+# Health check
+./talkie health
+
+# Stop services
+./talkie stop
+
+# Restart services
+./talkie restart
+
+# Clean up
+./talkie clean containers
+```
+
+See `./talkie help` for all commands.
 
 ### macOS with Ollama
 
-On macOS, run Ollama from the menu bar or start it with `ollama serve`. Ensure a model is available (e.g. `ollama pull mistral`). The default `config.yaml` uses `http://localhost:11434` and model `mistral`, so no config change is needed. Speech-to-text defaults to **Whisper** (`small` model); the model downloads on first run. On a Raspberry Pi or low-RAM machine, set `stt.engine: vosk` and download a Vosk model from [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models). For best accuracy (especially with impaired speech), set `stt.whisper.model_path: "medium"` (needs ~5GB RAM).
+**Podman (recommended):** Run `./talkie app` or `./talkie start core`. Ollama runs in a Podman container (`talkie-ollama`); the script starts it, pulls the configured model if missing, and warms the model so the first request does not 500. Logs: `podman logs talkie-ollama`.
+
+**Without Podman:** Run Ollama from the menu bar or start it with `ollama serve`. Ensure a model is available (e.g. `ollama pull mistral`). The default `config.yaml` uses `http://localhost:11434` and model `mistral`, so no config change is needed. Speech-to-text defaults to **Whisper** (`small` model); the model downloads on first run. On a Raspberry Pi or low-RAM machine, set `stt.engine: vosk` and download a Vosk model from [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models). For best accuracy (especially with impaired speech), set `stt.whisper.model_path: "medium"` (needs ~5GB RAM).
 
 ## Configuration
 
-Edit `config.yaml` to set:
+Config is merged from module configs (`modules/speech/config.yaml`, etc.), root `config.yaml`, and optional `config.user.yaml` (user overrides, e.g. from Settings). Edit `config.yaml` (and optionally `config.user.yaml`) to set:
 
 - `audio.device_id`, `audio.sample_rate`, `audio.chunk_duration_sec`, `audio.sensitivity` (gain for quiet speech, default 2.5; 1.0 = normal, 2.0–4.0 = more sensitive)
 - `stt.engine` (`whisper` or `vosk`) and `stt.whisper.model_path` (`base`, `small`, `medium`, `large-v3`); see "Speech-to-text accuracy" below
@@ -50,7 +90,7 @@ Edit `config.yaml` to set:
 - `persistence.db_path`
 - `curation.interval_hours` (optional; 0 = disabled), `curation.correction_weight_bump`, `curation.pattern_count_weight_scale`, `curation.delete_older_than_days`, `curation.max_interactions_to_curate`
 - `profile.correction_limit`, `profile.accepted_limit` (optional; defaults in `profile/constants.py`)
-- `ui.fullscreen`, `ui.high_contrast`, `ui.font_size`
+- Web UI: `TALKIE_WEB_HOST`, `TALKIE_WEB_PORT` (default 8765)
 - `logging.level`
 
 ## Speech-to-text accuracy
@@ -96,6 +136,7 @@ You can upload documents (TXT, PDF), vectorize them with Ollama embeddings, and 
 1. **Documents dialog** (Documents button): Add files, then click **Vectorize** to chunk, embed (Ollama), and store them in Chroma at `data/rag_chroma` (configurable in `config.yaml` under `rag.vector_db_path`). The dialog shows indexed documents; you can **Remove from index** or **Clear all**.
 2. **Ask documents (?)** button: Turn it on, then speak a question. The app retrieves relevant chunks from the vector DB and the LLM answers using only that context. Document Q&A responses are stored in the same History as regular answers.
 3. **Embedding model**: Set `rag.embedding_model` in `config.yaml` (default `nomic-embed-text`). Pull it first: `ollama pull nomic-embed-text`. If the configured model is missing, the app tries fallbacks (e.g. `mxbai-embed-large`, `all-minilm`) or shows a clear error.
+4. **Vector DB in Podman** (optional): To run Chroma in a container, use `podman compose up -d` (see project root `compose.yaml`). Then set `rag.chroma_host: "localhost"` and optionally `rag.chroma_port: 8000` in `config.yaml`. If `chroma_host` is unset, the app uses an embedded Chroma store at `rag.vector_db_path`.
 
 RAG retrieval runs only when "Ask documents" is on, so normal conversation has no extra latency. Training facts (Train dialog) remain in the system prompt as before.
 
@@ -105,6 +146,8 @@ RAG retrieval runs only when "Ask documents" is on, so normal conversation has n
 pipenv install --dev
 pipenv run pytest tests/ -v
 ```
+
+Code quality: `pipenv run ruff check .` and `pipenv run ruff format .`.
 
 ## Scholar PDF downloader (rifai_scholar_downloader)
 
@@ -119,17 +162,33 @@ See `rifai_scholar_downloader/README.md` for setup, usage examples, and limitati
 
 ## Project structure
 
-- `app/` – Pipeline orchestration
-- `audio/` – Microphone capture
-- `stt/` – Speech-to-text (Vosk, Whisper via faster-whisper)
-- `speaker/` – Speaker filter (no-op by default)
+Core (application root):
+
+- `app/` – Pipeline orchestration, speech abstractions, audio level helper
+- `config.py` – Config loading (merges module configs, root `config.yaml`, optional `config.user.yaml`)
 - `llm/` – Ollama/Mistral client and prompts
 - `profile/` – Language profile (user context, corrections, accepted pairs) and constants
 - `persistence/` – SQLite schema, history repo, settings repo; migrations in `database.py`
 - `curation/` – Curator (pattern recognition, weighting, add/remove), scheduler, CLI, and JSONL export for fine-tuning
-- `ui/` – PyQt6 fullscreen UI (Settings, History, Documents, Train, Calibrate, volume widget)
-- `rag/` – Document ingestion (chunk, embed via Ollama, Chroma store), retrieval with source attribution
+- `web/` – Web UI static assets (index.html); FastAPI + WebSocket in `run_web.py`
 - `rifai_scholar_downloader/` – Resumable Google Scholar author PDF downloader (open-access only)
+
+**Modules** (optional features under `modules/`):
+
+- `modules/speech/` – Audio capture, STT (Vosk, Whisper), TTS (say), speaker filter, calibration; each has its own `config.yaml` merged into the main config
+- `modules/rag/` – Document ingestion (chunk, embed via Ollama, Chroma store), retrieval; plugin entry point `register_with_pipeline()`
+- `modules/browser/` – Voice-controlled web (search, open URL, store page for RAG); plugin entry point `create_web_handler()`
+
+The app composes these at startup: if a module is missing or fails to load, the rest of the app still runs (e.g. without RAG or browser). Core depends only on abstractions and plugin APIs so modules can be maintained or removed independently.
+
+## Modular design
+
+Talkie is split into **core** and **modules** so the codebase stays maintainable and contributors can work on one area (speech, RAG, web) without touching the rest.
+
+- **Core** defines interfaces (e.g. in `app/abstractions.py`) and wires optional plugins in `run_web.py`. Pipeline accepts injected speech components and optional RAG/web handlers.
+- **Modules** live under `modules/`: `speech`, `rag`, `browser`. Each module can provide a default `config.yaml` in its directory; the main `config.yaml` (and optional `config.user.yaml`) are merged on top. To disable a module, omit or remove its directory, or set the relevant config (e.g. `browser.enabled: false`).
+- **Configuration**: Root `config.yaml` plus optional `config.user.yaml` (written by the Settings UI). Module defaults are in `modules/<name>/config.yaml`. Load order: module configs merged first, then root config, then user overrides. Some settings take effect after restart.
+- **Debugging**: Errors and warnings appear in the web UI debug area and in `talkie_debug.log` with `[ERROR]` / `[WARN]` prefixes. Safe to leave debug on for troubleshooting.
 
 ## License
 

@@ -1,0 +1,12 @@
+# Browser (web) module defaults.
+# Merged with root config.yaml; root overrides these.
+
+browser:
+  enabled: true
+  chrome_app_name: "Google Chrome"
+  fetch_timeout_sec: 20
+  fetch_max_retries: 2
+  search_engine_url: "https://duckduckgo.com/?q={query}"
+  cooldown_sec: 2.0
+  demo_delay_between_scenarios_sec: 4.0
+  page_history_max: 10  # keep last N pages in index for go back

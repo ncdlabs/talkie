@@ -1,9 +1,5 @@
 """Unit tests for rifai_scholar_downloader helpers."""
 
-from pathlib import Path
-
-import pytest
-
 # Test io_utils
 from rifai_scholar_downloader.io_utils import (
     load_manifest,
@@ -80,7 +76,10 @@ class TestSha256File:
     def test_known_content(self, tmp_path):
         f = tmp_path / "f.bin"
         f.write_bytes(b"hello")
-        assert sha256_file(f) == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        assert (
+            sha256_file(f)
+            == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        )
 
 
 class TestAtomicWrite:

@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv/
+env/
+
+# Data and large artifacts (not needed in image build)
+data/
+models/
+*.db
+*.sqlite3
+*.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+*.pdf
+FEATURES_OVERVIEW.*
+
+# Tests
+tests/
+.pytest_cache
+
+# Downloads
+downloads/
+
+# Temporary
+*.tmp
+*.bak

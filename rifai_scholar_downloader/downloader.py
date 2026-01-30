@@ -44,7 +44,9 @@ def _find_existing_item(manifest: dict, pub: dict) -> dict | None:
     pub_year = str(pub.get("year") or "unknown").strip()
     pub_title = pub.get("title") or ""
     for it in manifest.get("items") or []:
-        if (it.get("title") or "") == pub_title and str(it.get("year") or "unknown").strip() == pub_year:
+        if (it.get("title") or "") == pub_title and str(
+            it.get("year") or "unknown"
+        ).strip() == pub_year:
             return it
     return None
 
@@ -73,7 +75,11 @@ def run(
     outdir = Path(outdir)
     ensure_dir(outdir)
     manifest_path = outdir / "manifest.json"
-    manifest = load_manifest(manifest_path) if resume else {"items": [], "version": MANIFEST_VERSION}
+    manifest = (
+        load_manifest(manifest_path)
+        if resume
+        else {"items": [], "version": MANIFEST_VERSION}
+    )
     items: list[dict] = manifest.setdefault("items", [])
 
     # 1) Enumerate publications
@@ -94,7 +100,11 @@ def run(
     for idx, pub in enumerate(pubs):
         title = pub.get("title") or "Untitled"
         raw_year = pub.get("year")
-        year = str(raw_year).strip() if raw_year is not None and str(raw_year).strip() else "unknown"
+        year = (
+            str(raw_year).strip()
+            if raw_year is not None and str(raw_year).strip()
+            else "unknown"
+        )
         year_dir = "unknown" if year == "unknown" or not year.isdigit() else year
         existing = _find_existing_item(manifest, pub) if resume else None
 
@@ -115,7 +125,12 @@ def run(
 
         # Ensure we have an item in manifest
         item = existing or next(
-            (i for i in items if (i.get("title") or "") == title and str(i.get("year") or "unknown").strip() == year),
+            (
+                i
+                for i in items
+                if (i.get("title") or "") == title
+                and str(i.get("year") or "unknown").strip() == year
+            ),
             None,
         )
         if not item:
@@ -173,7 +188,7 @@ def run(
             r.raise_for_status()
             data = b"".join(r.iter_content(chunk_size=65536))
             r.close()
-            ct = r.headers.get("Content-Type", "")
+            r.headers.get("Content-Type", "")
             if not data.startswith(b"%PDF"):
                 logger.warning("Response not PDF (magic): %s", title[:50])
                 item["status"] = STATUS_DOWNLOAD_FAILED
@@ -213,7 +228,9 @@ def run(
         pt = pub.get("title") or ""
         py = str(pub.get("year") or "unknown").strip()
         for it in items:
-            if (it.get("title") or "") == pt and str(it.get("year") or "unknown").strip() == py:
+            if (it.get("title") or "") == pt and str(
+                it.get("year") or "unknown"
+            ).strip() == py:
                 it["bib"] = pub.get("bib", {})
                 break
 

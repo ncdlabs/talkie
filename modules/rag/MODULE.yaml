@@ -1,0 +1,7 @@
+# RAG module manifest (optional).
+# See MODULES.md in project root for the module standard.
+name: rag
+description: Document ingest, embedding, retrieval for LLM context.
+order: 20
+enabled: true
+config_file: config.yaml

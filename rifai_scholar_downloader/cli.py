@@ -108,7 +108,9 @@ def main() -> None:
     except RuntimeError as e:
         if "CAPTCHA" in str(e) or "rate" in str(e).lower():
             logger.error("%s", e)
-            logger.info("Retry later from the same network. Do not attempt to bypass CAPTCHA.")
+            logger.info(
+                "Retry later from the same network. Do not attempt to bypass CAPTCHA."
+            )
         else:
             logger.exception("Error: %s", e)
         sys.exit(1)

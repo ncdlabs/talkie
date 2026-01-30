@@ -1,0 +1,9 @@
+# Ollama with pre-pulled model(s). Uses entrypoint to pull OLLAMA_PRELOAD_MODELS after serve starts.
+FROM ollama/ollama:latest
+
+COPY ollama-entrypoint.sh /ollama-entrypoint.sh
+RUN chmod +x /ollama-entrypoint.sh
+
+ENV OLLAMA_PRELOAD_MODELS=tinyllama
+
+ENTRYPOINT ["/ollama-entrypoint.sh"]

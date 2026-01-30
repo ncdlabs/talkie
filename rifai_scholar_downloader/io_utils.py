@@ -35,7 +35,7 @@ def safe_filename(base: str, year: str | None = None, suffix: str = "") -> str:
     if len(safe) > max_base:
         safe = safe[:max_base].rstrip(" ._-")
     # Append short hash to reduce collision chance
-    h = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[: _HASH_LEN]
+    h = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:_HASH_LEN]
     return f"{safe} ({h}){suffix}"
 
 
