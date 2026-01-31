@@ -32,38 +32,39 @@ A Python application for laptop or Raspberry Pi that helps people with speech im
 
 ## Setup
 
-The main app uses **Pipfile** for dependencies. Install and run:
+The main app uses **Pipfile** for dependencies. Install and start services with the Talkie CLI (do not run the Python process directly):
 
 ```bash
 pipenv install
-pipenv run python run_web.py
+./talkie start all
 ```
+
+Then open http://localhost:8765. To run only the Web UI (no containers): `./talkie start web`. Optional: set `TALKIE_CONFIG` to the path of a different `config.yaml`.
 
 Note: `requirements.txt` is for the **rifai_scholar_downloader** subproject only; use Pipfile for the Talkie app.
 
-Then open http://localhost:8765. Optional: set `TALKIE_CONFIG` to the path of a different `config.yaml`.
-
 ## Service Management
 
-For managing infrastructure services (Consul, KeyDB, HAProxy, etc.):
+Always start services via the Talkie CLI: `./talkie start {all,service}`. Do not run `python run_web.py` (or `pipenv run python run_web.py`) directly.
 
 ```bash
-# Start all services
-./talkie start
+# Start all services (infrastructure + Chroma + modules + Web UI)
+./talkie start all
 
-# Start specific service groups
-./talkie start infrastructure  # Consul, KeyDB, HAProxy, etc.
-./talkie start core            # Ollama, Chroma
-./talkie start modules         # Module servers
+# Start only the Web UI (no Podman containers)
+./talkie start web
+
+# Start a specific service or group
+./talkie start core     # Chroma only (Ollama is local)
+./talkie start modules  # speech, rag, browser, healthbeat
+./talkie start chroma   # single service
+./talkie start speech   # single service
 
 # Check status
 ./talkie status
 
 # View logs
 ./talkie logs consul-server --follow
-
-# Health check
-./talkie health
 
 # Stop services
 ./talkie stop
@@ -79,9 +80,11 @@ See `./talkie help` for all commands.
 
 ### macOS with Ollama
 
-**Podman (recommended):** Run `./talkie app` or `./talkie start core`. Ollama runs in a Podman container (`talkie-ollama`); the script starts it, pulls the configured model if missing, and warms the model so the first request does not 500. Logs: `podman logs talkie-ollama`.
+**Local Ollama (recommended on macOS):** Use a local Ollama install for GPU acceleration. Run `ollama serve` (or start Ollama from the menu bar), then `ollama pull phi` (or your configured model). Default `config.yaml` uses `http://localhost:11434` and `model_name: "phi"`. Start Talkie with `./talkie start all` or `./talkie app`; Ollama stays local and is not run in a container.
 
-**Without Podman:** Run Ollama from the menu bar or start it with `ollama serve`. Ensure a model is available (e.g. `ollama pull phi` or `ollama pull mistral`). Default `config.yaml` uses `http://localhost:11434` and `model_name: "phi"`. Speech-to-text defaults to **Whisper** (`base` in config; use `small` or `medium` for better accuracy). On a Raspberry Pi or low-RAM machine, set `stt.engine: vosk` and use a Vosk model from [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models). For best accuracy (especially with impaired speech), set `stt.whisper.model_path: "medium"` (needs ~5GB RAM).
+**Podman (optional):** For infrastructure and module servers (Consul, KeyDB, HAProxy, Chroma, speech, rag, browser), `./talkie start` uses Podman. Ollama is not run in Podman on macOS so you keep local GPU processing.
+
+Speech-to-text defaults to **Whisper** (`base` in config; use `small` or `medium` for better accuracy). On a Raspberry Pi or low-RAM machine, set `stt.engine: vosk` and run `./talkie download` to fetch a Vosk model from [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models). For best accuracy (especially with impaired speech), set `stt.whisper.model_path: "medium"` (needs ~5GB RAM).
 
 ## Configuration
 
@@ -143,7 +146,7 @@ You can upload documents (TXT, PDF), vectorize them with Ollama embeddings, and 
 1. **Documents dialog** (Documents button): Add files, then click **Vectorize** to chunk, embed (Ollama), and store in Chroma at `data/rag_chroma` (config: `rag.vector_db_path`). The dialog shows indexed documents; you can **Remove from index** or **Clear all**.
 2. **Ask documents (?)** button: Turn it on, then speak a question. The app retrieves relevant chunks and the LLM answers using only that context. Document Q&A responses are stored in History like regular answers.
 3. **Embedding model**: Set `rag.embedding_model` in `config.yaml` (default `nomic-embed-text`). Run `ollama pull nomic-embed-text`. If the model is missing, the app tries fallbacks or shows a clear error.
-4. **Vector DB in Podman** (optional): Run Chroma in a container with `podman compose up -d` (see `compose.yaml`). Set `rag.chroma_host` and optionally `rag.chroma_port` in `config.yaml`. If `chroma_host` is unset, the app uses an embedded Chroma store at `rag.vector_db_path`.
+4. **Vector DB in Podman** (optional): Run Chroma in a container with `./talkie start chroma` (or `./talkie start all`; see `compose.yaml`). Set `rag.chroma_host` and optionally `rag.chroma_port` in `config.yaml`. If `chroma_host` is unset, the app uses an embedded Chroma store at `rag.vector_db_path`.
 
 RAG retrieval runs only when "Ask documents" is on, so normal conversation has no extra latency. Training facts (Train dialog) remain in the system prompt as before.
 
