@@ -10,3 +10,9 @@ browser:
   cooldown_sec: 2.0
   demo_delay_between_scenarios_sec: 4.0
   page_history_max: 10  # keep last N pages in index for go back
+  # Number of search result links to show with numbers (e.g. "1. Title, 2. Title") so user can say "open 3"
+  search_results_numbered_count: 10
+  # Use search API (ddgs) for structured results only; never fetch or display the search engine HTML page.
+  search_use_api: true
+  # Base URL of Talkie web UI for numbered results page (numbers in DOM). Default http://localhost:8765
+  # talkie_web_base_url: "http://localhost:8765"

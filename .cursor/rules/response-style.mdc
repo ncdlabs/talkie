@@ -1,0 +1,10 @@
+---
+description: How to respond to user messages—formulate intent, don't parrot
+alwaysApply: true
+---
+
+# Response style
+
+- **Do not** merely repeat or paraphrase what the user said.
+- **If the user's message is incomplete** (fragment, typo, shorthand, or implied intent), treat it as intent: formulate a complete sentence or clear question and respond to that.
+- **Respond to the user's intent**, not only to the literal wording. That is the point of using an LLM.

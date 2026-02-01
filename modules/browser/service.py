@@ -4,11 +4,13 @@ Browser service facade: search URL, open in Chrome, record current page, run dem
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import re
 import time
 from typing import Callable
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import parse_qs, quote_plus, urlparse, urljoin
 
 from modules.browser.base import FetchResult
 from modules.browser.chrome_opener import ChromeOpener
@@ -19,6 +21,7 @@ from modules.browser.html_content import (
     extract_text_from_html,
     extract_title_from_html,
 )
+from modules.browser.search_api import search_via_api
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,32 @@ def _sanitize_source_for_rag(url: str) -> str:
     """Produce a short label for RAG source from URL (e.g. for list_indexed_sources)."""
     s = re.sub(r"[^a-zA-Z0-9._-]", "_", url)
     return (s[:100] + "..") if len(s) > 100 else s
+
+
+def _query_from_search_engine_url(url: str) -> str | None:
+    """
+    If url is a search engine search URL (Google, DuckDuckGo, Bing, etc.),
+    return the query string; otherwise return None. Used to never open
+    the search engine page and instead run the search flow (API -> table).
+    """
+    if not (url or "").strip():
+        return None
+    try:
+        parsed = urlparse(url.strip())
+        netloc = (parsed.netloc or "").lower()
+        path = (parsed.path or "").lower()
+        qs = parse_qs(parsed.query)
+        if "google." in netloc and "/search" in path:
+            return (qs.get("q") or [None])[0]
+        if "duckduckgo." in netloc:
+            return (qs.get("q") or [None])[0]
+        if "bing." in netloc and "/search" in path:
+            return (qs.get("q") or [None])[0]
+        if "yahoo." in netloc and "/search" in path:
+            return (qs.get("p") or qs.get("q") or [None])[0]
+    except Exception:
+        pass
+    return None
 
 
 class BrowserService:
@@ -71,6 +100,68 @@ class BrowserService:
         self._page_index_cache: dict[
             str, dict
         ] = {}  # url -> {"title": str, "links": list}
+        self._search_results_numbered_count = max(
+            0, int(config.get("search_results_numbered_count", 10))
+        )
+        self._talkie_web_base = (
+            (config.get("talkie_web_base_url") or "").strip()
+            or "http://localhost:8765"
+        ).rstrip("/")
+        # Use search API (structured results only); no fetch of search engine HTML page.
+        self._search_use_api = config.get("search_use_api", True)
+
+    def _build_browse_results_url(
+        self, search_url: str, query: str, links: list[dict]
+    ) -> str:
+        """
+        Build Talkie browse-results URL with encoded links so numbers appear in the DOM.
+        Always returns a URL (even when links is empty) so we only open the table view.
+        Links are truncated to keep URL length safe (href max 200, text max 80).
+        """
+        n = max(0, self._search_results_numbered_count)
+        taken = (links or [])[:n]
+        payload = []
+        for i, link in enumerate(taken, start=1):
+            href = (link.get("href") or "").strip()[:200]
+            text = (link.get("text") or link.get("href") or "").strip()[:80]
+            desc = (link.get("description") or "").strip()[:150]
+            payload.append({"href": href, "text": text, "description": desc, "index": i})
+        data_b64 = base64.urlsafe_b64encode(
+            json.dumps(payload).encode("utf-8")
+        ).decode("ascii")
+        base_url = self._talkie_web_base
+        params = [
+            "url=" + quote_plus(search_url),
+            "q=" + quote_plus(query[:100]),
+            "data=" + quote_plus(data_b64),
+        ]
+        return base_url + "/browse-results?" + "&".join(params)
+
+    def _build_browse_results_url_by_run_id(self, run_id: str) -> str:
+        """Build browse-results URL that serves the table from SQLite by run_id."""
+        return self._talkie_web_base + "/browse-results?run_id=" + quote_plus(run_id)
+
+    def _format_numbered_links(
+        self, links: list[dict], max_title_len: int = 50
+    ) -> str:
+        """
+        Format the first N links (by config search_results_numbered_count) as
+        "1. Title1, 2. Title2, ..." for display after a search. Numbers match
+        link_index so the user can say "open 3" to open the third link.
+        """
+        n = self._search_results_numbered_count
+        if n <= 0 or not links:
+            return ""
+        taken = links[:n]
+        parts = []
+        for i, link in enumerate(taken, start=1):
+            text = (link.get("text") or link.get("href") or "").strip()
+            if len(text) > max_title_len:
+                text = text[: max_title_len - 3].rstrip() + "..."
+            if not text:
+                text = "link " + str(i)
+            parts.append(f"{i}. {text}")
+        return " ".join(parts)
 
     def build_search_url(self, query: str) -> str:
         """Build search URL from template and query."""
@@ -255,8 +346,8 @@ class BrowserService:
 
     def run_demo(self, index: int) -> str:
         """
-        Run the demo scenario at the given index (0-based). Opens search URL or URL in Chrome.
-        Returns a short message.
+        Run the demo scenario at the given index (0-based). Never opens the search engine
+        HTML page; open_url demos open the given URL. For search demos use normal search flow.
         """
         if self._in_cooldown():
             return "Please wait a moment before running another demo."
@@ -266,11 +357,10 @@ class BrowserService:
         t = (scenario.get("type") or "").lower()
         if t == "search":
             query = (scenario.get("query") or "").strip()
-            url = self.build_search_url(query)
-            msg = self.open_in_browser(url)
-            if "Opened" in msg:
-                return f"Opened search for {query} in Chrome."
-            return msg
+            return (
+                f"Demo search: say \"search {query}\" to see results in the table "
+                "(search engine page is not opened)."
+            )
         if t == "open_url":
             url = (scenario.get("url") or "").strip()
             if not url:
@@ -301,6 +391,7 @@ class BrowserService:
         rag_ingest: Callable[[str, str], None] | None = None,
         on_selection_changed: Callable[[str | None], None] | None = None,
         on_open_url: Callable[[str], None] | None = None,
+        on_save_search_results: Callable[[str, str, list], str | None] | None = None,
         open_locally: bool = True,
     ) -> str | tuple[str, str | None]:
         """
@@ -353,24 +444,92 @@ class BrowserService:
             query = (intent.get("query") or "").strip()
             if not query:
                 return 'Say "search", then your search term.'
-            url = self.build_search_url(query)
-            logger.debug("BrowserService: search query=%r url=%r", query, url)
-            try:
-                msg = self.open_in_browser(url)
-            except Exception as e:
-                logger.exception(
-                    "BrowserService: open_in_browser failed for search: %s", e
-                )
-                return "Could not open the search in the browser."
-            if "Opened" in msg:
-                # Build page index for this SERP so "open [title]" / "click [title]" can resolve from it.
+            # Obtain results via API only; never fetch or display the search engine HTML page.
+            links: list[dict] = []
+            search_url_for_save = ""
+            if self._search_use_api:
                 try:
-                    self._get_or_build_page_index(url)
+                    links = search_via_api(
+                        query,
+                        max_results=max(
+                            self._search_results_numbered_count, 30,
+                        ),
+                    )
+                    search_url_for_save = self.build_search_url(query)
                 except Exception as e:
                     logger.debug(
-                        "BrowserService: prebuild page index for search failed: %s", e
+                        "BrowserService: search API failed: %s", e
                     )
-                return f"Opened search for {query} in Chrome."
+            if not links:
+                try:
+                    url = self.build_search_url(query)
+                    logger.debug(
+                        "BrowserService: fallback fetch query=%r url=%r",
+                        query,
+                        url,
+                    )
+                    _title, links = self._get_or_build_page_index(url)
+                    search_url_for_save = url
+                except Exception as e:
+                    logger.debug(
+                        "BrowserService: page index for search failed: %s", e
+                    )
+            # Build table from API/fetch results; save to SQLite; serve HTML from it. Do not show original search page.
+            run_id = None
+            if on_save_search_results:
+                try:
+                    run_id = on_save_search_results(
+                        query,
+                        search_url_for_save,
+                        links[: self._search_results_numbered_count],
+                    )
+                except Exception as e:
+                    logger.debug(
+                        "BrowserService: save search results failed: %s", e
+                    )
+            if run_id:
+                browse_results_url = self._build_browse_results_url_by_run_id(
+                    run_id
+                )
+            else:
+                browse_results_url = self._build_browse_results_url(
+                    search_url_for_save, query, links
+                )
+            # No original search page to discard when using API; clear any cached fetch URL.
+            if search_url_for_save:
+                self._page_index_cache.pop(search_url_for_save, None)
+            self._page_index_cache[browse_results_url] = {
+                "title": f"Search: {query}",
+                "links": links[: self._search_results_numbered_count],
+            }
+            self._push_page_history(browse_results_url)
+            self._last_opened_url = browse_results_url
+            # Only ever open the table URL (browse_results_url). Never open the search engine page.
+            logger.info(
+                "Browse search: opening table only (never search page): %s",
+                browse_results_url[:80] + ("..." if len(browse_results_url) > 80 else ""),
+            )
+            if on_open_url:
+                try:
+                    on_open_url(browse_results_url)
+                except Exception as e:
+                    logger.debug("on_open_url failed: %s", e)
+            # Always open the table in Chrome so the user sees our page, not the search engine.
+            try:
+                self._opener.open_in_new_tab(browse_results_url)
+            except Exception as e:
+                logger.exception(
+                    "BrowserService: open browse-results failed: %s", e
+                )
+                return "Could not open the results page in the browser."
+            n = min(len(links), self._search_results_numbered_count)
+            msg = (
+                f"Say 'open 1' through 'open {n}' to open a result."
+                if n > 0
+                else "Say open and a number to open a result."
+            )
+            if not open_locally and not on_open_url:
+                return (msg, browse_results_url)
             return msg
 
         if action == "open_url":
@@ -379,6 +538,24 @@ class BrowserService:
                 return "Which URL should I open?"
             if "://" not in url:
                 url = "https://" + url
+            # Never open search engine pages: run search flow and show table instead.
+            query = _query_from_search_engine_url(url)
+            if query is not None:
+                logger.info(
+                    "Browse: open_url is search URL, running search flow instead (query=%r)",
+                    query[:60] + ("..." if len(query) > 60 else ""),
+                )
+                search_intent = dict(intent)
+                search_intent["action"] = "search"
+                search_intent["query"] = query
+                return self.execute(
+                    search_intent,
+                    rag_ingest=rag_ingest,
+                    on_selection_changed=on_selection_changed,
+                    on_open_url=on_open_url,
+                    on_save_search_results=on_save_search_results,
+                    open_locally=open_locally,
+                )
             logger.debug("BrowserService: open_url url=%r (new tab)", url)
             try:
                 self._opener.open_in_new_tab(url)

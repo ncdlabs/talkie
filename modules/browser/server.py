@@ -64,13 +64,27 @@ class BrowserModuleServer(BaseModuleServer):
                         )
                     from llm.prompts import (
                         build_browse_intent_prompts,
+                        build_web_mode_prompts,
                         parse_browse_intent,
+                        parse_web_mode_command,
                     )
 
                     utterance = data.get("utterance", "")
-                    browse_system, browse_user = build_browse_intent_prompts(utterance)
-                    raw = self._ollama_client.generate(browse_user, browse_system)
-                    intent = parse_browse_intent(raw)
+                    web_mode_system_prompt = (
+                        self._config.get("llm") or {}
+                    ).get("web_mode_system_prompt")
+                    if web_mode_system_prompt:
+                        browse_system, browse_user = build_web_mode_prompts(
+                            utterance, system_prompt=web_mode_system_prompt
+                        )
+                        raw = self._ollama_client.generate(browse_user, browse_system)
+                        intent = parse_web_mode_command(raw)
+                    else:
+                        browse_system, browse_user = build_browse_intent_prompts(
+                            utterance
+                        )
+                        raw = self._ollama_client.generate(browse_user, browse_system)
+                        intent = parse_browse_intent(raw)
                 elif "intent" in data:
                     # Pre-parsed intent
                     intent = data.get("intent", {})

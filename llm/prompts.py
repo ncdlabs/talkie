@@ -153,10 +153,113 @@ Rule for scroll: "scroll up/down/left/right" (with or without "the page") -> scr
 If the phrase is not a browser command (e.g. "I want water"), use {"action": "unknown"}. Output only the JSON object, no markdown or explanation."""
 
 
+def normalize_browse_utterance(utterance: str) -> str:
+    """
+    Normalize common STT mishears for browse commands before intent parsing.
+    E.g. "open sir" / "Open, sir" -> "open 1" so "open 1" is recognized correctly.
+    """
+    if not utterance or not utterance.strip():
+        return utterance
+    u = utterance.strip()
+    # "open sir" / "open, sir" / "open sir." -> "open 1" (STT often hears "open 1" as "open sir")
+    m = re.match(r"^(\s*open)\s*,?\s*sir\.?\s*", u, re.I)
+    if m:
+        prefix = m.group(1)
+        rest = u[m.end() :].strip()
+        u = f"{prefix} 1" + (f" {rest}" if rest else "")
+    return u
+
+
 def build_browse_intent_prompts(utterance: str) -> tuple[str, str]:
     """Build system and user prompts for browse intent extraction. Returns (system_prompt, user_prompt)."""
-    user = f"User said: {utterance.strip()}"
+    user = f"User said: {normalize_browse_utterance(utterance).strip()}"
     return BROWSE_INTENT_SYSTEM.strip(), user
+
+
+def build_web_mode_prompts(
+    utterance: str, system_prompt: str | None = None
+) -> tuple[str, str]:
+    """
+    Build system and user prompts for web (browse) mode when using the
+    normalized-command system prompt (config llm.web_mode_system_prompt).
+    Returns (system_prompt, user_prompt). If system_prompt is None, falls back
+    to BROWSE_INTENT_SYSTEM (JSON output).
+    """
+    system = (system_prompt or "").strip() or BROWSE_INTENT_SYSTEM.strip()
+    user = f"User said: {normalize_browse_utterance(utterance or '').strip()}"
+    return system, user
+
+
+def parse_web_mode_command(raw: str) -> dict:
+    """
+    Parse a single-line normalized web-mode command into the same intent dict
+    used by parse_browse_intent. Used when llm.web_mode_system_prompt is set.
+    Command format: "browse on", "search <query>", "save page", "back",
+    "open <target>", "scroll up", "scroll down", "no_command".
+    """
+    out: dict = {"action": "unknown"}
+    if not raw or not raw.strip():
+        return out
+    line = raw.strip().split("\n")[0].strip()
+    if not line:
+        return out
+    lower = line.lower()
+    if lower == "no_command":
+        return out
+    if lower == "browse on":
+        out["action"] = "browse_on"
+        return out
+    if lower == "browse off":
+        out["action"] = "browse_off"
+        return out
+    if lower == "save page":
+        out["action"] = "store_page"
+        return out
+    if lower == "back":
+        out["action"] = "go_back"
+        return out
+    if lower == "scroll up":
+        out["action"] = "scroll_up"
+        return out
+    if lower == "scroll down":
+        out["action"] = "scroll_down"
+        return out
+    if lower.startswith("search "):
+        out["action"] = "search"
+        out["query"] = line[7:].strip()
+        return out
+    if lower.startswith("open "):
+        target = line[5:].strip()
+        if target:
+            out["action"] = "click_link"
+            out["link_text"] = target
+            # "sir" is a common STT mishear for "1"; treat as link_index 1
+            if re.match(r"^sir\.?$", target, re.I):
+                out["link_index"] = 1
+                out.pop("link_text", None)
+                return out
+            # Optional: "result 3" or "result three" -> link_index
+            result_match = re.match(r"result\s+(one|two|three|four|five|\d+)\s*$", target, re.I)
+            if result_match:
+                word = result_match.group(1).lower()
+                ordinals = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+                if word in ordinals:
+                    out["link_index"] = ordinals[word]
+                    out.pop("link_text", None)
+                elif word.isdigit():
+                    out["link_index"] = int(word)
+                    out.pop("link_text", None)
+            # Bare digit or "one"/"two"/... -> link_index
+            elif re.match(r"^\d+$", target):
+                out["link_index"] = int(target)
+                out.pop("link_text", None)
+            else:
+                ordinals = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+                if target.lower() in ordinals:
+                    out["link_index"] = ordinals[target.lower()]
+                    out.pop("link_text", None)
+        return out
+    return out
 
 
 def parse_browse_intent(raw: str) -> dict:

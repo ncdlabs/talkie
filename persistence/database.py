@@ -67,6 +67,28 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_interactions_weight ON interactions(weight) WHERE weight IS NOT NULL"
     )
+    # Browse search results table (search page rebuilt as indexed table in SQLite)
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='browse_search_results'"
+    )
+    if cur.fetchone() is None:
+        conn.execute("""
+            CREATE TABLE browse_search_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                row_num INTEGER NOT NULL,
+                query TEXT NOT NULL,
+                search_url TEXT,
+                href TEXT,
+                title TEXT,
+                description TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX idx_browse_search_results_run_id ON browse_search_results(run_id)"
+        )
+        logger.debug("Added browse_search_results table")
 
 
 def init_database(db_path: str) -> None:

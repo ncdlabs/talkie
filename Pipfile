@@ -18,11 +18,10 @@ python-multipart = "*"
 python-consul = "*"
 redis = "*"
 httpx = "*"
-# Speaker embedding for voice calibration (optional: app falls back to accept-all if not installed)
 resemblyzer = "*"
 torch = "*"
-# macOS-only; container (Linux) skips via marker so pyobjc is not required
 pyautogui = {version = "*", markers = "sys_platform == 'darwin'"}
+ddgs = "*"
 
 [dev-packages]
 mypy = "*"

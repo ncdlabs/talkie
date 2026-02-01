@@ -127,6 +127,15 @@ def _force_click_or_select_intent_if_uttered(utterance: str, intent: dict) -> No
             intent["url"] = url
             logger.info("Browse: forced open_url from utterance url=%r", url)
             return
+        # "open sir" / "open, sir" -> link_index 1 (common STT mishear for "open 1")
+        if re.match(r"^sir\.?$", rest, re.IGNORECASE):
+            intent["action"] = "click_link"
+            intent.pop("query", None)
+            intent["link_index"] = 1
+            if "link_text" in intent:
+                del intent["link_text"]
+            logger.info("Browse: forced click_link from 'open sir' -> link_index=1")
+            return
         # "open the first link" etc. -> click_link by ordinal; "open link for X" -> click_link by text.
         ordinal = re.match(
             r"^(?:the\s+)?(?:first|1st|one|second|2nd|two|third|3rd|three|fourth|4th|four|fifth|5th|five)\s*(?:link\s*)?(?:down)?$",
@@ -388,14 +397,21 @@ def _force_search_intent_if_uttered(utterance: str, intent: dict) -> None:
 
 def _force_store_intent_if_uttered(utterance: str, intent: dict) -> None:
     """
-    If the user said "store this page", "store page", or "store the page",
+    If the user said "save page", "store this page", "store page", or "store the page",
     force action store_page so the LLM cannot misparse.
     """
     u = (utterance or "").strip()
     if not u:
         return
     ul = u.lower()
-    for phrase in ("store this page", "store the page", "store page", "store this"):
+    for phrase in (
+        "save page",
+        "save the page",
+        "store this page",
+        "store the page",
+        "store page",
+        "store this",
+    ):
         if phrase in ul or ul.startswith(phrase) or ul == phrase:
             intent["action"] = "store_page"
             intent.pop("query", None)
@@ -474,6 +490,7 @@ def create_web_handler(
     config: object,
     ollama_client: object,
     rag_ingest_callback: Callable[[str, str], None] | None = None,
+    conn_factory: Callable[[], object] | None = None,
 ) -> Callable[[str, Callable[[bool], None]], str | None] | None:
     """
     Build the web handler callable for pipeline.set_web_handler.
@@ -483,6 +500,7 @@ def create_web_handler(
     raw = getattr(config, "_raw", config) if config is not None else {}
     if not isinstance(raw, dict):
         raw = {}
+    web_mode_system_prompt = (raw.get("llm") or {}).get("web_mode_system_prompt")
 
     # Check if server mode is enabled
     from modules.api.config import get_module_server_config, get_module_base_url
@@ -529,14 +547,28 @@ def create_web_handler(
             on_open_url: Callable[[str], None] | None = None,
         ) -> str | None:
             try:
-                from llm.prompts import build_browse_intent_prompts, parse_browse_intent
+                from llm.prompts import (
+                    build_browse_intent_prompts,
+                    build_web_mode_prompts,
+                    parse_browse_intent,
+                    parse_web_mode_command,
+                )
 
                 logger.debug(
                     "Web search (remote): utterance=%r", (utterance or "")[:120]
                 )
-                browse_system, browse_user = build_browse_intent_prompts(utterance)
-                raw_intent = ollama_client.generate(browse_user, browse_system)
-                intent = parse_browse_intent(raw_intent)
+                if web_mode_system_prompt:
+                    browse_system, browse_user = build_web_mode_prompts(
+                        utterance, system_prompt=web_mode_system_prompt
+                    )
+                    raw_intent = ollama_client.generate(browse_user, browse_system)
+                    intent = parse_web_mode_command(raw_intent)
+                else:
+                    browse_system, browse_user = build_browse_intent_prompts(
+                        utterance
+                    )
+                    raw_intent = ollama_client.generate(browse_user, browse_system)
+                    intent = parse_browse_intent(raw_intent)
                 _force_search_intent_if_uttered(utterance, intent)
                 _force_store_intent_if_uttered(utterance, intent)
                 _force_go_back_intent_if_uttered(utterance, intent)
@@ -610,12 +642,24 @@ def create_web_handler(
         on_open_url: Callable[[str], None] | None = None,
     ) -> str | None:
         try:
-            from llm.prompts import build_browse_intent_prompts, parse_browse_intent
+            from llm.prompts import (
+                build_browse_intent_prompts,
+                build_web_mode_prompts,
+                parse_browse_intent,
+                parse_web_mode_command,
+            )
 
             logger.debug("Web search (local): utterance=%r", (utterance or "")[:120])
-            browse_system, browse_user = build_browse_intent_prompts(utterance)
-            raw_intent = ollama_client.generate(browse_user, browse_system)
-            intent = parse_browse_intent(raw_intent)
+            if web_mode_system_prompt:
+                browse_system, browse_user = build_web_mode_prompts(
+                    utterance, system_prompt=web_mode_system_prompt
+                )
+                raw_intent = ollama_client.generate(browse_user, browse_system)
+                intent = parse_web_mode_command(raw_intent)
+            else:
+                browse_system, browse_user = build_browse_intent_prompts(utterance)
+                raw_intent = ollama_client.generate(browse_user, browse_system)
+                intent = parse_browse_intent(raw_intent)
             _force_search_intent_if_uttered(utterance, intent)
             _force_store_intent_if_uttered(utterance, intent)
             _force_go_back_intent_if_uttered(utterance, intent)
@@ -632,11 +676,19 @@ def create_web_handler(
             if action == "browse_off":
                 set_web_mode(False)
                 return "Browse mode is off."
+            def _on_save_search_results(q: str, search_url: str, links: list) -> str | None:
+                if not conn_factory:
+                    return None
+                from persistence.browse_results_repo import save_run
+
+                return save_run(conn_factory, q, search_url, links)
+
             result = browser_service.execute(
                 intent,
                 rag_ingest=rag_ingest_callback,
                 on_selection_changed=set_web_selection,
                 on_open_url=on_open_url,
+                on_save_search_results=_on_save_search_results,
             )
             if isinstance(result, tuple):
                 result = result[0]
@@ -686,7 +738,10 @@ def register(context: dict) -> None:
             model_name=ollama_cfg.get("model_name", "mistral"),
             options=ollama_cfg.get("options"),
         )
-        handler = create_web_handler(config, intent_llm, None)
+        conn_factory = context.get("conn_factory")
+        handler = create_web_handler(
+            config, intent_llm, None, conn_factory=conn_factory
+        )
         if handler is not None:
             pipeline.set_web_handler(handler)
     except Exception as e:

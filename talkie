@@ -209,6 +209,8 @@ cmd_restart() {
         log_info "Stopping all services..."
         cmd_stop "all"
         sleep 2
+        log_info "Building images (if needed due to changes)..."
+        $COMPOSE_CMD build
         log_info "Starting all services..."
         cmd_start "all"
         return
@@ -735,7 +737,8 @@ cmd_restart_changed() {
     local any_module=$(( speech_changed + rag_changed + browser_changed + healthbeat_changed ))
     if [ "$any_module" -eq 0 ]; then
         if [ "$main_changed" -eq 1 ]; then
-            log_warn "Only main app code changed (app/, run.py, run_web.py, config, etc.). Restart the main app manually (e.g. ./talkie app)."
+            log_info "Only main app code changed (app/, run.py, run_web.py, config, etc.). Restarting main app (web)..."
+            cmd_web_restart
         fi
         return 0
     fi

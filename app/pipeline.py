@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from typing import Callable
@@ -23,6 +24,7 @@ from app.abstractions import (
     TTSEngine,
 )
 from app.audio_utils import chunk_rms_level
+from app.browse_command import BrowseCommandMatcher
 from llm.client import FALLBACK_MESSAGE, MEMORY_ERROR_MESSAGE, OllamaClient
 from llm.prompts import (
     build_document_qa_system_prompt,
@@ -120,6 +122,12 @@ def create_pipeline(
         correction_display_cap=correction_display_cap,
         accepted_display_cap=accepted_display_cap,
     )
+    browse_cfg = config.get("browser", {}) or {}
+    try:
+        browse_cooldown_sec = float(browse_cfg.get("cooldown_after_tts_sec", 12.0))
+        browse_cooldown_sec = max(0.0, min(60.0, browse_cooldown_sec))
+    except (TypeError, ValueError):
+        browse_cooldown_sec = 12.0
     return Pipeline(
         capture=capture,
         stt=stt,
@@ -130,6 +138,7 @@ def create_pipeline(
         tts=tts,
         llm_prompt_config=llm_prompt_config,
         auto_sensitivity=auto_sensitivity or {"enabled": False},
+        browse_cooldown_after_tts_sec=browse_cooldown_sec,
     )
 
 
@@ -149,6 +158,7 @@ class Pipeline:
         tts: TTSEngine,
         llm_prompt_config: dict | None = None,
         auto_sensitivity: dict | None = None,
+        browse_cooldown_after_tts_sec: float = 12.0,
     ) -> None:
         self._capture = capture
         self._stt = stt
@@ -159,6 +169,7 @@ class Pipeline:
         self._tts = tts
         self._llm_prompt_config = llm_prompt_config or {}
         self._auto_sensitivity = auto_sensitivity or {"enabled": False}
+        self._browse_cooldown_after_tts_sec = max(0.0, min(60.0, browse_cooldown_after_tts_sec))
 
         self._on_status: Callable[[str], None] = lambda _: None
         self._on_response: Callable[[str, int], None] = lambda _t, _i: None
@@ -184,10 +195,25 @@ class Pipeline:
         self._on_open_url: Callable[[str], None] = lambda _: None
         # Skip only when the same text appears in the immediately previous chunk (consecutive duplicate)
         self._previous_chunk_transcription: str | None = None
-        # Skip when transcription matches what we just spoke (echo from speaker into mic)
+        # Do not listen to yourself: filter out our own TTS from being treated as user input.
         self._last_spoken_response: str | None = None
+        self._recent_spoken_responses: list[str] = []  # last N spoken (echo filter against all)
+        self._recent_spoken_max = 3
+        # Skip browse commands for N seconds after we spoke (avoid TTS echo / mishear triggering actions).
+        self._last_tts_time: float = 0.0
         # Executor for parallel work (prefetch profile + recent during regeneration). Created in start(), shut down in stop().
         self._executor: ThreadPoolExecutor | None = None
+        self._browse_matcher = BrowseCommandMatcher()
+
+    def _push_spoken(self, text: str) -> None:
+        """Record spoken TTS so we can filter it out from STT (do not listen to yourself)."""
+        s = (text or "").strip()
+        self._last_spoken_response = s or self._last_spoken_response
+        if s:
+            self._recent_spoken_responses = [s] + [
+                x for x in self._recent_spoken_responses if x != s
+            ][: self._recent_spoken_max - 1]
+            self._last_tts_time = time.monotonic()
 
     def set_ui_callbacks(
         self,
@@ -446,6 +472,18 @@ class Pipeline:
             self._debug("Transcription: " + text)
 
             try:
+                min_level = self._llm_prompt_config.get("min_audio_level")
+                min_level = float(min_level) if min_level is not None else 0.0
+            except (TypeError, ValueError):
+                min_level = 0.0
+            if min_level > 0 and level < min_level:
+                self._debug(
+                    "Audio level below threshold (%.4f < %.4f); skipping to avoid false triggers"
+                    % (level, min_level)
+                )
+                continue
+
+            try:
                 min_len = self._llm_prompt_config.get("min_transcription_length")
                 min_len = int(min_len) if min_len is not None else 0
             except (TypeError, ValueError):
@@ -479,17 +517,10 @@ class Pipeline:
                     continue
             self._previous_chunk_transcription = text_normalized
 
-            # Skip when transcription matches our last spoken response (mic picking up TTS = echo loop)
-            if self._last_spoken_response and text_normalized:
-                last = self._last_spoken_response.strip().lower()
+            # Do not listen to yourself: skip when transcription matches any recent TTS (mic picking up our own voice).
+            if text_normalized and self._recent_spoken_responses:
                 trans_lower = text_normalized.lower()
-                if trans_lower == last:
-                    self._debug(
-                        "Transcription matches last spoken response (echo); skipping"
-                    )
-                    continue
 
-                # Fuzzy echo: STT often mishears (punctuation, commas). Normalize and treat as echo if one contains the other or high word overlap.
                 def _norm_echo(s: str) -> str:
                     return " ".join(
                         "".join(
@@ -498,23 +529,34 @@ class Pipeline:
                     )
 
                 nt = _norm_echo(text_normalized)
-                ns = _norm_echo(last)
-                if nt and ns:
-                    if len(nt) >= 20 and (nt in ns or ns in nt):
-                        self._debug(
-                            "Transcription contained in last spoken (echo); skipping"
-                        )
+                is_echo = False
+                for last in self._recent_spoken_responses:
+                    if not last:
                         continue
-                    trans_words = set(nt.split())
-                    spoken_words = set(ns.split())
-                    if len(trans_words) >= 4 and spoken_words:
-                        overlap = len(trans_words & spoken_words) / len(trans_words)
-                        if overlap >= 0.75:
-                            self._debug(
-                                "Transcription overlaps last spoken (%d%% word match, echo); skipping"
-                                % (round(overlap * 100),)
-                            )
-                            continue
+                    last_lower = last.strip().lower()
+                    if trans_lower == last_lower:
+                        is_echo = True
+                        break
+                    ns = _norm_echo(last)
+                    if nt and ns:
+                        # Substring match: only treat as echo when transcription isn't meaningfully longer (user adding words = new input).
+                        if len(nt) >= 20 and (nt in ns or ns in nt):
+                            # User said more than we spoke (e.g. repeated phrase + "finish the sentence") -> not echo.
+                            if len(nt) > len(ns) + 15:
+                                continue
+                            is_echo = True
+                            break
+                        trans_words = set(nt.split())
+                        spoken_words = set(ns.split())
+                        if len(trans_words) >= 4 and spoken_words:
+                            if len(trans_words & spoken_words) / len(trans_words) >= 0.75:
+                                is_echo = True
+                                break
+                if is_echo:
+                    self._debug(
+                        "Transcription is our own voice (echo); skipping"
+                    )
+                    continue
 
             # User started speaking again: abort any playing TTS so we can process this (retry).
             try:
@@ -539,7 +581,17 @@ class Pipeline:
                 except (TypeError, ValueError):
                     turns = 0
 
-                if self._llm_prompt_config.get("regeneration_enabled", True):
+                # Skip regeneration when we will take the browse path: one path per utterance (browse OR speech).
+                if self._web_mode and self._web_handler is not None:
+                    intent_sentence = text
+                    used_regeneration = False
+                elif (
+                    self._web_handler is not None
+                    and self._browse_matcher.is_browse_command(text)
+                ):
+                    intent_sentence = text
+                    used_regeneration = False
+                elif self._llm_prompt_config.get("regeneration_enabled", True):
                     request_certainty = self._llm_prompt_config.get(
                         "regeneration_request_certainty", True
                     )
@@ -664,101 +716,39 @@ class Pipeline:
                     self._on_status("Listening...")
                     continue
 
-                # Optional web/browse: when web mode is on, or utterance looks like search/click/select,
-                # treat as browse and open the system browser for search/open URL/store page/click/select link.
-                def _looks_like_browse_search(s: str) -> bool:
-                    u = (s or "").strip().lower()
-                    if not u:
-                        return False
-                    return (
-                        "searching for " in u
-                        or "search for " in u
-                        or u.startswith("searching ")
-                        or u.startswith("search ")
-                        or " searching " in u
-                        or " search " in u
-                    )
-
-                def _looks_like_browse_store(s: str) -> bool:
-                    u = (s or "").strip().lower()
-                    if not u:
-                        return False
-                    return (
-                        "store this page" in u
-                        or "store the page" in u
-                        or u.startswith("store page")
-                        or u == "store page"
-                        or u.startswith("store this")
-                    )
-
-                def _looks_like_browse_go_back(s: str) -> bool:
-                    u = (s or "").strip().lower()
-                    if not u:
-                        return False
-                    return (
-                        "go back" in u
-                        or u == "go back"
-                        or "previous page" in u
-                        or u == "back"
-                    )
-
-                def _looks_like_browse_click_or_select(s: str) -> bool:
-                    u = (s or "").strip().lower()
-                    if not u:
-                        return False
-                    # At start (e.g. "click the third link", "open the first link")
-                    if (
-                        u.startswith("click")
-                        or u.startswith("select ")
-                        or u.startswith("open the ")
-                        or u.startswith("open ")
-                        or u == "click"
-                        or u.startswith("the link for ")
-                        or u.startswith("link for ")
-                    ):
-                        return True
-                    # Anywhere (e.g. "please click the third link", "open the first link")
-                    return (
-                        " click " in u
-                        or " clicks " in u
-                        or " clicked " in u
-                        or " select " in u
-                        or " open the " in u
-                        or " open " in u
-                        or " the link for " in u
-                        or " link for " in u
-                    )
-
-                def _looks_like_browse_scroll(s: str) -> bool:
-                    u = (s or "").strip().lower()
-                    if not u:
-                        return False
-                    if u.startswith("scroll ") or u == "scroll":
-                        return True
-                    return (
-                        " scroll up" in u
-                        or " scroll down" in u
-                        or " scroll left" in u
-                        or " scroll right" in u
-                    )
-
-                if self._web_handler is not None and (
-                    self._web_mode
-                    or _looks_like_browse_search(intent_sentence)
-                    or _looks_like_browse_search(text)
-                    or _looks_like_browse_store(intent_sentence)
-                    or _looks_like_browse_store(text)
-                    or _looks_like_browse_go_back(intent_sentence)
-                    or _looks_like_browse_go_back(text)
-                    or _looks_like_browse_click_or_select(intent_sentence)
-                    or _looks_like_browse_click_or_select(text)
-                    or _looks_like_browse_scroll(intent_sentence)
-                    or _looks_like_browse_scroll(text)
+                # Optional web/browse: only respond to commands (search, scroll, click, etc.); do not enter for conversation.
+                if self._web_handler is not None and self._browse_matcher.is_browse_command(
+                    intent_sentence, text
                 ):
-                    self._on_status("Responding... (browse)")
+                    # Skip browse during cooldown after we spoke (avoid TTS echo / mishear triggering clicks).
+                    if (
+                        self._browse_cooldown_after_tts_sec > 0
+                        and self._last_tts_time > 0
+                        and (time.monotonic() - self._last_tts_time)
+                        < self._browse_cooldown_after_tts_sec
+                    ):
+                        self._debug(
+                            "Browse: skipping (cooldown %.0fs after TTS)"
+                            % self._browse_cooldown_after_tts_sec
+                        )
+                        self._on_status("Listening...")
+                        continue
                     # Always use raw transcription for browse so regeneration cannot inject "and chrome", "in Chrome", etc.
-                    # (e.g. "click current news" -> "current news and chrome open google in Chrome" would trigger search)
                     browse_utterance = (text or "").strip() or intent_sentence
+                    if self._web_mode:
+                        browse_utterance = self._browse_matcher.first_single_command(
+                            browse_utterance
+                        )
+                    # In web mode only act on a clear command that starts the utterance (wait for command; no echo/continuation).
+                    if not self._browse_matcher.starts_with_browse_command(
+                        browse_utterance
+                    ):
+                        self._debug(
+                            "Browse: skipping (wait for command; utterance does not start with command)"
+                        )
+                        self._on_status("Listening...")
+                        continue
+                    self._on_status("Responding... (browse)")
                     self._debug(
                         "Browse: using raw transcription: '%s'"
                         % (
@@ -811,7 +801,7 @@ class Pipeline:
                         spoken_text = strip_certainty_from_response(web_response or "")
                         self._on_response(spoken_text, interaction_id)
                         prev_spoken = (self._last_spoken_response or "").strip().lower()
-                        self._last_spoken_response = (spoken_text or "").strip()
+                        self._push_spoken(spoken_text)
                         if prev_spoken != (self._last_spoken_response or "").lower():
                             try:
                                 self._tts.speak(spoken_text)
@@ -824,7 +814,17 @@ class Pipeline:
                         self._on_status("Listening...")
                         continue
 
+                    # Web mode: no output when no command was executed (handler returned None).
+                    if self._web_mode:
+                        self._on_status("Listening...")
+                        continue
+
                 self._on_status("Responding...")
+
+                # Web mode: only output when we executed a browse command; otherwise no TTS, no save.
+                if self._web_mode:
+                    self._on_status("Listening...")
+                    continue
 
                 # Build recent-context data once so we can block repeats on every response path
                 conversation_context = ""
@@ -905,11 +905,32 @@ class Pipeline:
                     )
                     certainty_threshold = max(0, min(100, certainty_threshold))
 
-                    # If we heard the full sentence and the LLM effectively agrees (same or nearly same), just repeat it.
+                    # If we heard the full sentence and the LLM effectively agrees (same or nearly same), just repeat it —
+                    # unless the utterance looks like a request/command (user wants an action or completed reply, not an echo).
                     def _normalize_for_repeat(s: str) -> str:
                         s = (s or "").strip().lower()
                         s = " ".join(s.split())
                         return s.rstrip(".!? ")
+
+                    def _looks_like_request(u: str) -> bool:
+                        u = (u or "").strip().lower()
+                        if not u or len(u) < 6:
+                            return False
+                        return (
+                            u.startswith("please take me")
+                            or u.startswith("take me ")
+                            or u.startswith("take me to")
+                            or u.startswith("go to ")
+                            or u.startswith("go to the ")
+                            or u.startswith("open ")
+                            or u.startswith("open the ")
+                            or u.startswith("turn on ")
+                            or u.startswith("turn off ")
+                            or u.startswith("i need ")
+                            or u.startswith("i want to ")
+                            or " take me " in u
+                            or " take me to " in u
+                        )
 
                     transcript_norm = _normalize_for_repeat(text_normalized)
                     intent_norm = _normalize_for_repeat(intent_sentence)
@@ -918,6 +939,7 @@ class Pipeline:
                         and transcript_norm
                         and intent_norm
                         and transcript_norm == intent_norm
+                        and not _looks_like_request(intent_sentence)
                     )
                     if llm_agrees_repeat:
                         response = intent_sentence.strip()
@@ -1075,7 +1097,7 @@ class Pipeline:
                     if self._last_spoken_response
                     else ""
                 )
-                self._last_spoken_response = (spoken_text or "").strip()
+                self._push_spoken(spoken_text)
                 is_error_fallback = (spoken_text or "").strip() in (
                     FALLBACK_MESSAGE.strip(),
                     MEMORY_ERROR_MESSAGE.strip(),

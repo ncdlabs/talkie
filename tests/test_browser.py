@@ -14,7 +14,7 @@ from modules.browser.base import FetchResult
 from modules.browser.fetcher import HttpFetcher
 from modules.browser.html_content import extract_text_from_html
 from modules.browser.service import BrowserService, DEFAULT_DEMO_SCENARIOS
-from llm.prompts import parse_browse_intent
+from llm.prompts import parse_browse_intent, parse_web_mode_command
 
 
 # ---- build_search_url ----
@@ -196,6 +196,43 @@ def test_parse_browse_intent_click_link_no_args() -> None:
     assert "link_text" not in intent or not (intent.get("link_text") or "").strip()
 
 
+# ---- parse_web_mode_command ----
+@pytest.mark.parametrize(
+    "raw,expected_action,expected_query",
+    [
+        ("browse on", "browse_on", None),
+        ("browse off", "browse_off", None),
+        ("search weather tomorrow", "search", "weather tomorrow"),
+        ("save page", "store_page", None),
+        ("back", "go_back", None),
+        ("scroll up", "scroll_up", None),
+        ("scroll down", "scroll_down", None),
+        ("no_command", "unknown", None),
+    ],
+)
+def test_parse_web_mode_command(
+    raw: str, expected_action: str, expected_query: str | None
+) -> None:
+    intent = parse_web_mode_command(raw)
+    assert intent.get("action") == expected_action
+    if expected_query is not None:
+        assert intent.get("query") == expected_query
+
+
+def test_parse_web_mode_command_open_target() -> None:
+    intent = parse_web_mode_command("open result three")
+    assert intent.get("action") == "click_link"
+    assert intent.get("link_index") == 3
+    intent = parse_web_mode_command("open weather")
+    assert intent.get("action") == "click_link"
+    assert intent.get("link_text") == "weather"
+
+
+def test_parse_web_mode_command_empty_returns_unknown() -> None:
+    assert parse_web_mode_command("")["action"] == "unknown"
+    assert parse_web_mode_command("  \n  ")["action"] == "unknown"
+
+
 def test_force_click_intent_overrides_search() -> None:
     """Click + words must become click_link with link_text, not search (avoids repeating search in Chrome)."""
     intent = {"action": "search", "query": "trump tariffs today"}
@@ -291,15 +328,29 @@ def test_service_execute_search_empty_query_returns_message() -> None:
     assert "search" in msg.lower()
 
 
-@patch("modules.browser.service.ChromeOpener.open_in_browser")
-def test_service_execute_search_opens_and_records_url(mock_open: object) -> None:
+@patch("modules.browser.service.ChromeOpener.open_in_new_tab")
+@patch("modules.browser.service.BrowserService.fetch")
+def test_service_execute_search_opens_and_records_url(
+    mock_fetch: object, mock_open_new_tab: object
+) -> None:
+    """Search opens numbered results page (browse-results) so numbers are in the DOM."""
+    from modules.browser.base import FetchResult
+
+    mock_fetch.return_value = FetchResult(
+        status_code=200,
+        text='<html><head><title>Search</title></head><body><a href="https://a.example/">First</a><a href="https://b.example/">Second</a></body></html>',
+        content_type="text/html",
+        error=None,
+    )
     config = {"search_engine_url": "https://duckduckgo.com/?q={query}"}
     svc = BrowserService(config)
     svc.execute({"action": "search", "query": "cats"})
-    mock_open.assert_called_once()
-    call_url = mock_open.call_args[0][0]
+    mock_open_new_tab.assert_called_once()
+    call_url = mock_open_new_tab.call_args[0][0]
+    assert "/browse-results" in call_url
     assert "cats" in call_url or "q=" in call_url
     assert svc.get_last_opened_url() is not None
+    assert "/browse-results" in (svc.get_last_opened_url() or "")
 
 
 def test_default_demo_scenarios_non_empty() -> None:
@@ -310,6 +361,24 @@ def test_default_demo_scenarios_non_empty() -> None:
     for s in DEFAULT_DEMO_SCENARIOS:
         assert isinstance(s, dict)
         assert "type" in s
+
+
+def test_format_numbered_links() -> None:
+    """Numbered links are formatted so user can say 'open 1', 'open 2', etc."""
+    config = {"search_results_numbered_count": 5}
+    svc = BrowserService(config)
+    links = [
+        {"href": "https://a.example/", "text": "First result", "index": 1},
+        {"href": "https://b.example/", "text": "Second result", "index": 2},
+        {"href": "https://c.example/", "text": "Third", "index": 3},
+    ]
+    out = svc._format_numbered_links(links)
+    assert "1. First result" in out
+    assert "2. Second result" in out
+    assert "3. Third" in out
+    assert "4." not in out
+    out_empty = svc._format_numbered_links([])
+    assert out_empty == ""
 
 
 def test_build_search_url_always_returns_string() -> None:

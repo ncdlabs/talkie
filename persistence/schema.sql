@@ -35,3 +35,18 @@ CREATE TABLE IF NOT EXISTS training_facts (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_training_facts_created_at ON training_facts(created_at);
+
+-- Browse search results: temporary table per search command (indexed #, persisted to SQLite, then HTML served from it).
+-- One row per result; run_id groups rows for a single search. Original search page is discarded after this table is created.
+CREATE TABLE IF NOT EXISTS browse_search_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    row_num INTEGER NOT NULL,
+    query TEXT NOT NULL,
+    search_url TEXT,
+    href TEXT,
+    title TEXT,
+    description TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_browse_search_results_run_id ON browse_search_results(run_id);
