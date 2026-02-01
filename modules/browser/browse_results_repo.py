@@ -1,6 +1,7 @@
 """
-Repository for browse search result runs: temporary indexed table per search command.
-Saves run to SQLite; HTML table view is generated from this data. Original search page is not shown.
+Browse search result runs: temporary indexed table per search command.
+Saves run to SQLite; table HTML is generated from this data. Self-contained in browser module.
+Uses conn_factory from app (shared DB); table is defined in persistence/schema.sql.
 """
 
 from __future__ import annotations
@@ -8,9 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Callable
-
-from persistence.database import with_connection
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +18,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _with_connection(conn_factory: Callable[[], Any], fn: Callable[[Any], Any], commit: bool = False) -> Any:
+    conn = conn_factory()
+    try:
+        result = fn(conn)
+        if commit:
+            conn.commit()
+        return result
+    except Exception:
+        if commit:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def save_run(
-    conn_factory: Callable[[], object],
+    conn_factory: Callable[[], Any],
     query: str,
     search_url: str,
     links: list[dict],
     max_rows: int = 50,
 ) -> str | None:
     """
-    Save a search result run to SQLite: one row per result with auto-increment # (row_num).
+    Save a search result run to SQLite: one row per result with row_num (#).
     Returns run_id for the URL (e.g. /browse-results?run_id=xxx), or None on failure.
     """
     run_id = str(uuid.uuid4())
@@ -36,7 +50,7 @@ def save_run(
     taken = (links or [])[:max_rows]
     now = _now_iso()
 
-    def do_save(conn) -> None:
+    def do_save(conn: Any) -> None:
         for i, link in enumerate(taken, start=1):
             href = (link.get("href") or "").strip()[:2000]
             title = (link.get("text") or link.get("href") or "").strip()[:500]
@@ -50,14 +64,14 @@ def save_run(
             )
 
     try:
-        with_connection(conn_factory, do_save, commit=True)
+        _with_connection(conn_factory, do_save, commit=True)
         return run_id
     except Exception as e:
         logger.exception("browse_results save_run failed: %s", e)
         return None
 
 
-def get_run(conn_factory: Callable[[], object], run_id: str) -> dict | None:
+def get_run(conn_factory: Callable[[], Any], run_id: str) -> dict | None:
     """
     Load a search result run by run_id. Returns dict with "query", "rows" (list of dicts
     with row_num, href, title, description). Returns None if run_id not found.
@@ -65,7 +79,7 @@ def get_run(conn_factory: Callable[[], object], run_id: str) -> dict | None:
     if not (run_id or "").strip():
         return None
 
-    def do_get(conn) -> dict | None:
+    def do_get(conn: Any) -> dict | None:
         cur = conn.execute(
             """
             SELECT row_num, query, search_url, href, title, description
@@ -92,8 +106,7 @@ def get_run(conn_factory: Callable[[], object], run_id: str) -> dict | None:
         return {"query": query, "rows": rows}
 
     try:
-        rows = with_connection(conn_factory, do_get)
-        return rows if rows else None
+        return _with_connection(conn_factory, do_get)
     except Exception as e:
         logger.exception("browse_results get_run failed: %s", e)
         return None

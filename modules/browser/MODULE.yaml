@@ -1,7 +1,8 @@
 # Browser module manifest (optional).
 # See MODULES.md in project root for the module standard.
+# Deployment (container): see README.md in this directory.
 name: browser
-description: "Voice-controlled web: search, open URL, store page for RAG."
+description: "Voice-controlled web: search (table only), open URL, store page for RAG. Self-contained addon."
 order: 30
 enabled: true
 config_file: config.yaml

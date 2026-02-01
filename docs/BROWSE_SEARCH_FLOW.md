@@ -73,7 +73,7 @@ else:
     # => same host + /browse-results?url=...&q=...&data=<base64>
 ```
 
-**Save to SQLite:** `persistence/browse_results_repo.py` — `save_run(conn_factory, query, search_url, links)`:
+**Save to SQLite:** `modules/browser/browse_results_repo.py` — `save_run(conn_factory, query, search_url, links)`:
 
 - Generates a UUID `run_id`.
 - Inserts one row per result into `browse_search_results` (row_num, query, href, title, description).
@@ -153,8 +153,8 @@ So the tab that opens shows only the Talkie table page, not the search engine.
 | Step   | What happens | Code |
 |--------|--------------|------|
 | Search | Get links via API (or fallback fetch). No opening of search page. | `service.py` search block; `search_api.search_via_api()` |
-| Table  | Save links to SQLite; build `browse_results_url` (run_id or data=). | `browse_results_repo.save_run()`; `_build_browse_results_url_by_run_id` / `_build_browse_results_url` |
+| Table  | Save links to SQLite; build `browse_results_url` (run_id or data=). | `modules/browser/browse_results_repo.save_run()`; `_build_browse_results_url_by_run_id` / `_build_browse_results_url` |
 | Display| Call `on_open_url(browse_results_url)` → broadcast → client `window.open(msg.url)`. | `service.py`; `run_web.py` broadcast; `web/index.html` onmessage |
-| Serve  | `GET /browse-results?run_id=...` → load from DB → return table HTML. | `run_web.py` `browse_results()`; `browse_results_repo.get_run()` |
+| Serve  | `GET /browse-results?run_id=...` → load from DB → return table HTML. | `run_web.py` calls `modules/browser/browse_results_http.handle_browse_results()`; repo `get_run()` |
 
 The only URL ever passed to `on_open_url` or `open_in_new_tab` for search is the Talkie table URL; the raw search engine URL is never opened in the search path.

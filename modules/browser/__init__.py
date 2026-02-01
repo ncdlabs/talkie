@@ -679,7 +679,7 @@ def create_web_handler(
             def _on_save_search_results(q: str, search_url: str, links: list) -> str | None:
                 if not conn_factory:
                     return None
-                from persistence.browse_results_repo import save_run
+                from modules.browser.browse_results_repo import save_run
 
                 return save_run(conn_factory, q, search_url, links)
 

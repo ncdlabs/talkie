@@ -194,12 +194,10 @@ cmd_restart() {
     for svc in $COMPOSE_SERVICES; do
         if [ "$services" = "$svc" ]; then
             init_compose
-            log_info "Restarting $services..."
-            if ! $COMPOSE_CMD restart "$services" 2>/dev/null; then
-                log_info "Restarting existing container talkie-$services..."
-                podman stop "talkie-$services" 2>/dev/null || true
-                podman start "talkie-$services" || { log_error "Failed to restart talkie-$services"; return 1; }
-            fi
+            log_info "Building $services (so code changes are in the image)..."
+            $COMPOSE_CMD build "$services"
+            log_info "Recreating $services container..."
+            $COMPOSE_CMD up -d --force-recreate "$services"
             return
         fi
     done
