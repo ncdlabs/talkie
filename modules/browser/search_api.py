@@ -39,11 +39,13 @@ def search_via_api(
             title = (r.get("title") or "").strip()
             body = (r.get("body") or "").strip()
             if href:
-                links.append({
-                    "href": href,
-                    "text": title or href,
-                    "description": body,
-                })
+                links.append(
+                    {
+                        "href": href,
+                        "text": title or href,
+                        "description": body,
+                    }
+                )
     except Exception as e:
         logger.exception("Search API failed: %s", e)
     return links

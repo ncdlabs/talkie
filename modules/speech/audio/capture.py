@@ -41,7 +41,7 @@ class AudioCapture(AudioCaptureBase):
         self.sensitivity = max(0.1, min(10.0, float(sensitivity)))
         self._running = False
         self._stream: Any = None
-        self._buffer = b""
+        self._buffer = bytearray()
 
     def set_sensitivity(self, value: float) -> None:
         """Update sensitivity at runtime (e.g. from UI). Clamped to 0.1–10.0."""
@@ -79,7 +79,7 @@ class AudioCapture(AudioCaptureBase):
     def stop(self) -> None:
         """Stop and close the stream."""
         self._running = False
-        self._buffer = b""
+        self._buffer.clear()
         if self._stream is not None:
             try:
                 self._stream.stop()
@@ -112,9 +112,9 @@ class AudioCapture(AudioCaptureBase):
                     raw = self._apply_gain(raw)
                 if on_level is not None:
                     on_level(chunk_rms_level(raw))
-                self._buffer += raw
-            result = self._buffer[:chunk_bytes]
-            self._buffer = self._buffer[chunk_bytes:]
+                self._buffer.extend(raw)
+            result = bytes(self._buffer[:chunk_bytes])
+            del self._buffer[:chunk_bytes]
             return result
         except sd.PortAudioError as e:
             logger.exception("PortAudio error reading chunk: %s", e)

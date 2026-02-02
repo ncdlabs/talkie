@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app", "config", "llm", "persistence", "profile", "curation", "modules", "sdk"]
+omit = [
+    "run_web.py",
+    "run.py",
+    "run_module_server.py",
+    "*/__init__.py",
+]
+branch = false
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

@@ -27,7 +27,9 @@ def matcher() -> BrowseCommandMatcher:
         " search high speed rail",
     ],
 )
-def test_is_browse_command_search_and_relaxed(matcher: BrowseCommandMatcher, candidate: str) -> None:
+def test_is_browse_command_search_and_relaxed(
+    matcher: BrowseCommandMatcher, candidate: str
+) -> None:
     assert matcher.is_browse_command(candidate) is True
 
 
@@ -55,7 +57,9 @@ def test_is_browse_command_search_and_relaxed(matcher: BrowseCommandMatcher, can
         "browse off",
     ],
 )
-def test_is_browse_command_other_commands(matcher: BrowseCommandMatcher, candidate: str) -> None:
+def test_is_browse_command_other_commands(
+    matcher: BrowseCommandMatcher, candidate: str
+) -> None:
     assert matcher.is_browse_command(candidate) is True
 
 
@@ -77,8 +81,25 @@ def test_is_browse_command_other_commands(matcher: BrowseCommandMatcher, candida
         "to open a result one here, two click here, three feedback.",
     ],
 )
-def test_is_browse_command_negative(matcher: BrowseCommandMatcher, candidate: str) -> None:
+def test_is_browse_command_negative(
+    matcher: BrowseCommandMatcher, candidate: str
+) -> None:
     assert matcher.is_browse_command(candidate) is False
+
+
+def test_is_browse_command_empty_returns_false(matcher: BrowseCommandMatcher) -> None:
+    assert matcher.is_browse_command("") is False
+    assert matcher.is_browse_command("   ") is False
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    ["close tab", "close", "scroll", "scroll up", "link for first result", "the link for feedback"],
+)
+def test_is_browse_command_close_scroll_link(
+    matcher: BrowseCommandMatcher, candidate: str
+) -> None:
+    assert matcher.is_browse_command(candidate) is True
 
 
 # ---- is_browse_command: any of multiple candidates ----
@@ -104,7 +125,9 @@ def test_first_single_command_short_unchanged(matcher: BrowseCommandMatcher) -> 
     assert result == "search cats"
 
 
-def test_first_single_command_under_max_len_unchanged(matcher: BrowseCommandMatcher) -> None:
+def test_first_single_command_under_max_len_unchanged(
+    matcher: BrowseCommandMatcher,
+) -> None:
     short = "search airplane engines"
     assert matcher.first_single_command(short, max_len=80) == short
 
@@ -152,3 +175,48 @@ def test_starts_with_browse_command_negative(
     matcher: BrowseCommandMatcher, utterance: str
 ) -> None:
     assert matcher.starts_with_browse_command(utterance) is False
+
+
+def test_starts_with_browse_command_empty_returns_false(
+    matcher: BrowseCommandMatcher,
+) -> None:
+    assert matcher.starts_with_browse_command("") is False
+    assert matcher.starts_with_browse_command("   ") is False
+
+
+# ---- is_open_number_only: open result by number (cooldown exception) ----
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "open 1",
+        "open 6",
+        "open 10",
+        "Open 6.",
+        "open the 3",
+        "open one",
+        "open six",
+        "open ten",
+    ],
+)
+def test_is_open_number_only_positive(
+    matcher: BrowseCommandMatcher, utterance: str
+) -> None:
+    assert matcher.is_open_number_only(utterance) is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "open",
+        "open 0",
+        "open 11",
+        "open 12",
+        "open the first link",
+        "scroll down",
+        "open one two",
+    ],
+)
+def test_is_open_number_only_negative(
+    matcher: BrowseCommandMatcher, utterance: str
+) -> None:
+    assert matcher.is_open_number_only(utterance) is False

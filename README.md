@@ -29,9 +29,12 @@ Other useful commands: `./talkie status`, `./talkie logs <service> --follow`, `.
 ```bash
 pipenv install --dev
 pipenv run pytest tests/ -v
+pipenv run pytest tests/ --cov --cov-report=term-missing   # with coverage (requires pytest-cov)
 pipenv run ruff check .
 pipenv run ruff format .
 ```
+
+Tests cover core app (pipeline, browse command, audio, web capture), config, LLM (client and prompts), persistence (database, history/settings/training repos), profile (builder, store, constants), curation (curator, export, scheduler), modules (discovery, browser, RAG, speech calibration, API retry/circuit breaker), SDK (config, abstractions, audio utils, logging), and the rifai downloader helpers. Tests use many assertions per case to specify behavior clearly. Full testing documentation (catalog, how to run, coverage, per-module descriptions) is in the **project wiki** (Testing page).
 
 `requirements.txt` is for the **rifai_scholar_downloader** subproject only; use Pipfile for the Talkie app.
 

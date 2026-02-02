@@ -570,6 +570,21 @@ cmd_logs() {
     fi
 }
 
+# Interaction history: clear, list (numbered), view #, edit #
+cmd_history() {
+    local sub="${1:-}"
+    shift || true
+    if [ -z "$sub" ]; then
+        echo "Usage: ./talkie history {clear|list|view <N>|edit <N>}"
+        echo "  clear  - delete all interactions"
+        echo "  list   - numbered list (newest first, like bash history)"
+        echo "  view N - show full details of item N"
+        echo "  edit N - open \$EDITOR to edit correction for item N"
+        return 1
+    fi
+    ( cd "$SCRIPT_DIR" && pipenv run python history_cmd.py "$sub" "$@" )
+}
+
 # Status and health (combined)
 cmd_status() {
     init_compose
@@ -686,6 +701,60 @@ cmd_ps() {
     
     log_info "Talkie containers:"
     podman ps --filter "name=talkie-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+}
+
+# Rebuild images and recreate containers: all, changed [REF], or SPECIFIC_SERVICE
+cmd_rebuild() {
+    local target="${1:-}"
+    local ref
+    local svc
+
+    if [ -z "$target" ]; then
+        log_error "Missing target. Use: ./talkie rebuild {all|changed|SPECIFIC_SERVICE}"
+        echo "  all     - rebuild all images and recreate all containers"
+        echo "  changed - rebuild and restart only services whose code changed (git diff vs REF, default HEAD)"
+        echo "  SERVICE - rebuild and recreate one service (e.g. speech, rag, browser, healthbeat, web)"
+        exit 1
+    fi
+
+    if [ "$target" = "web" ]; then
+        log_info "Web UI has no container image; restarting web process..."
+        cmd_web_restart
+        return
+    fi
+
+    if [ "$target" = "changed" ]; then
+        ref="${2:-HEAD}"
+        cmd_restart_changed "$ref"
+        return
+    fi
+
+    if [ "$target" = "all" ]; then
+        init_compose
+        log_info "Rebuilding all images..."
+        $COMPOSE_CMD build
+        log_info "Recreating all containers..."
+        $COMPOSE_CMD up -d --force-recreate
+        log_info "Rebuild complete"
+        return
+    fi
+
+    for svc in $COMPOSE_SERVICES; do
+        if [ "$target" = "$svc" ]; then
+            init_compose
+            log_info "Rebuilding $target..."
+            $COMPOSE_CMD build "$target"
+            log_info "Recreating $target container..."
+            $COMPOSE_CMD up -d --force-recreate "$target"
+            log_info "Rebuild complete: $target"
+            return
+        fi
+    done
+
+    log_error "Unknown rebuild target: $target"
+    echo "Use: ./talkie rebuild {all|changed|SPECIFIC_SERVICE}"
+    echo "Services: $COMPOSE_SERVICES, web"
+    exit 1
 }
 
 # Restart only processes whose code has changed (git diff vs HEAD)
@@ -905,6 +974,12 @@ Commands:
         Restart services (default: all). Same targets as start.
         - restart changed [REF]: Restart/rebuild only services whose code changed (git diff vs REF, default HEAD).
 
+  rebuild {all|changed|SPECIFIC_SERVICE}
+        Rebuild images and recreate containers.
+        - all: rebuild all images, then recreate all containers
+        - changed [REF]: rebuild and restart only services whose code changed (git diff vs REF, default HEAD)
+        - SERVICE: rebuild and recreate one service (e.g. speech, rag, browser, healthbeat); web = restart web process
+
   status [web]
         Show status and health. No argument: all services + health checks. With web: Web UI only.
 
@@ -931,6 +1006,13 @@ Commands:
         - volumes: Remove volumes (deletes data)
         - all: Remove everything
 
+  history {clear|list|view <N>|edit <N>}
+        Interaction history (numbered, newest first)
+        - clear: delete all interactions
+        - list: numbered list (like bash history)
+        - view N: show full details of item N
+        - edit N: open \$EDITOR to edit correction for item N
+
   help    Show this help message
 
 Examples:
@@ -947,7 +1029,13 @@ Examples:
   ./talkie download                  # Vosk + Whisper + Ollama (tinyllama, phi, config)
   ./talkie download rifai            # + Scholar PDFs to downloads/
   ./talkie restart changed          # Restart/rebuild only containers whose code changed
+  ./talkie rebuild all              # Rebuild all images and recreate all containers
+  ./talkie rebuild changed          # Rebuild/restart only services with code changes
+  ./talkie rebuild speech           # Rebuild and recreate speech service only
   ./talkie clean containers         # Clean up containers
+  ./talkie history list             # Numbered interaction history (newest first)
+  ./talkie history view 1           # View details of most recent item
+  ./talkie history edit 1            # Edit correction for item 1 (\$EDITOR)
 
 EOF
 }
@@ -991,8 +1079,14 @@ main() {
         download)
             cmd_download "$1"
             ;;
+        rebuild)
+            cmd_rebuild "$1" "$2"
+            ;;
         clean)
             cmd_clean "${1:-containers}"
+            ;;
+        history)
+            cmd_history "$@"
             ;;
         help|--help|-h)
             usage

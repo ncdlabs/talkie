@@ -138,3 +138,54 @@ class ChromeOpener:
         except (subprocess.TimeoutExpired, OSError) as e:
             logger.warning("Chrome new tab failed: %s", e)
             self.open_in_browser(url)
+
+    def get_active_tab_url(self) -> str | None:
+        """
+        Return the URL of the active tab in the frontmost window of the browser.
+        On macOS uses AppleScript; on other platforms returns None.
+        """
+        if platform.system() != "Darwin":
+            return None
+        script = (
+            f'tell application "{self._app_name}" to '
+            "get URL of active tab of front window"
+        )
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                check=True,
+                timeout=5,
+                capture_output=True,
+                text=True,
+            )
+            url = (result.stdout or "").strip()
+            return url if url else None
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+            logger.debug("Chrome get active tab URL failed: %s", e)
+            return None
+
+    def close_active_tab(self) -> str:
+        """
+        Close the active tab in the frontmost window of the browser.
+        On macOS uses AppleScript. Returns a short user-facing message.
+        """
+        if platform.system() != "Darwin":
+            return "Close tab is only supported on macOS."
+        script = (
+            f'tell application "{self._app_name}" to '
+            "tell front window to close active tab"
+        )
+        try:
+            subprocess.run(
+                ["osascript", "-e", script],
+                check=True,
+                timeout=5,
+                capture_output=True,
+            )
+            return "Tab closed."
+        except subprocess.CalledProcessError as e:
+            logger.debug("Chrome close active tab failed: %s", e)
+            return "Could not close the tab. Is Chrome in front?"
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logger.warning("Chrome close active tab failed: %s", e)
+            return "Could not close the tab."

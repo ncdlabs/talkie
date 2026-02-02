@@ -1,17 +1,17 @@
 """
-Minimal audio level helper for the pipeline. Core depends only on this;
-speech module may use it or provide its own.
+Minimal audio helpers for the pipeline: level (from SDK) and resampling.
 Resampling: int16 mono PCM rate_in -> rate_out (e.g. 48k -> 16k for web).
 """
 
 from __future__ import annotations
 
 import logging
-import struct
+
+from sdk.audio_utils import INT16_MAX, chunk_rms_level
 
 logger = logging.getLogger(__name__)
 
-INT16_MAX = 32767
+__all__ = ["chunk_rms_level", "INT16_MAX", "resample_int16"]
 
 
 def resample_int16(audio_bytes: bytes, rate_in: int, rate_out: int) -> bytes:
@@ -40,21 +40,3 @@ def resample_int16(audio_bytes: bytes, rate_in: int, rate_out: int) -> bytes:
     resampled = np.interp(x_new, x_old, samples.astype(np.float64))
     out = np.clip(resampled, -32768, 32767).astype(np.int16)
     return out.tobytes()
-
-
-def chunk_rms_level(chunk: bytes | None) -> float:
-    """
-    Return RMS level of chunk (int16 little-endian) normalized to 0.0--1.0.
-    Returns 0.0 for None, empty, or too short chunk; never raises.
-    """
-    if chunk is None or len(chunk) < 2:
-        return 0.0
-    try:
-        n = len(chunk) // 2
-        samples = struct.unpack(f"<{n}h", chunk)
-        total = sum(s * s for s in samples)
-        rms = (total / n) ** 0.5 if n else 0.0
-        return min(1.0, rms / INT16_MAX)
-    except (struct.error, ZeroDivisionError, ValueError) as e:
-        logger.debug("chunk_rms_level failed: %s", e)
-        return 0.0

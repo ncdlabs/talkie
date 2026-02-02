@@ -19,7 +19,9 @@ DEFAULT_REGENERATION_SYSTEM = """You complete a speech-impaired user's partial u
 REGENERATION_JSON_SUFFIX = """ Output your reply as a single JSON object with exactly two keys: "sentence" (the one sentence as above, or "I didn't catch that." if unintelligible) and "certainty" (0-100). No other text, no markdown."""
 
 # User prompt must clearly ask to complete the phrase, not describe "raw speech recognition" (which triggers meta-explanations).
-DEFAULT_REGENERATION_USER_TEMPLATE = "Complete this phrase into one sentence the user meant to say: {transcription}"
+DEFAULT_REGENERATION_USER_TEMPLATE = (
+    "Complete this phrase into one sentence the user meant to say: {transcription}"
+)
 
 DEFAULT_EXPORT_INSTRUCTION = "You assist a speech-impaired user. Turn their partial speech into one clear, complete sentence in first person (as the user speaking: I want..., I need...). Output only that sentence."
 
@@ -109,7 +111,7 @@ BROWSE_INTENT_SYSTEM = """You interpret a spoken browse command. Output a single
 
 CRITICAL for search: If the user said "search" or "search for" followed by ANY other words, use action "search" and put EVERYTHING after "search"/"search for" into "query". Use the USER'S exact words for "query", never substitute example words like "cats" or "weather". Never use scroll_up/scroll_down/scroll_left/scroll_right for search requests.
 
-Required: "action" - one of: search, open_url, demo, browse_on, browse_off, store_page, click_link, select_link, go_back, scroll_up, scroll_down, scroll_left, scroll_right, unknown
+Required: "action" - one of: search, open_url, demo, browse_on, browse_off, store_page, click_link, select_link, go_back, scroll_up, scroll_down, scroll_left, scroll_right, close_tab, unknown
 
 Optional (only when relevant):
 - "query": string - for action "search" ONLY: the exact phrase the user said after "search" (e.g. user says "search high speed railway" -> query "high speed railway")
@@ -147,6 +149,8 @@ Examples:
 - User said: scroll right -> {"action": "scroll_right"}
 - User said: scroll the page up -> {"action": "scroll_up"}
 - User said: scroll the page down -> {"action": "scroll_down"}
+- User said: close -> {"action": "close_tab"}
+- User said: close tab -> {"action": "close_tab"}
 
 Rule for scroll: "scroll up/down/left/right" (with or without "the page") -> scroll_up, scroll_down, scroll_left, or scroll_right. No other keys needed.
 
@@ -224,6 +228,9 @@ def parse_web_mode_command(raw: str) -> dict:
     if lower == "scroll down":
         out["action"] = "scroll_down"
         return out
+    if lower == "close" or lower == "close tab":
+        out["action"] = "close_tab"
+        return out
     if lower.startswith("search "):
         out["action"] = "search"
         out["query"] = line[7:].strip()
@@ -239,7 +246,9 @@ def parse_web_mode_command(raw: str) -> dict:
                 out.pop("link_text", None)
                 return out
             # Optional: "result 3" or "result three" -> link_index
-            result_match = re.match(r"result\s+(one|two|three|four|five|\d+)\s*$", target, re.I)
+            result_match = re.match(
+                r"result\s+(one|two|three|four|five|\d+)\s*$", target, re.I
+            )
             if result_match:
                 word = result_match.group(1).lower()
                 ordinals = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
@@ -254,7 +263,18 @@ def parse_web_mode_command(raw: str) -> dict:
                 out["link_index"] = int(target)
                 out.pop("link_text", None)
             else:
-                ordinals = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+                ordinals = {
+                    "one": 1,
+                    "two": 2,
+                    "three": 3,
+                    "four": 4,
+                    "five": 5,
+                    "six": 6,
+                    "seven": 7,
+                    "eight": 8,
+                    "nine": 9,
+                    "ten": 10,
+                }
                 if target.lower() in ordinals:
                     out["link_index"] = ordinals[target.lower()]
                     out.pop("link_text", None)
@@ -293,6 +313,7 @@ def parse_browse_intent(raw: str) -> dict:
             "scroll_down",
             "scroll_left",
             "scroll_right",
+            "close_tab",
             "unknown",
         ):
             out["action"] = action
@@ -399,7 +420,9 @@ def _fallback_sentence_from_raw(raw: str) -> str:
         return match.group(1).strip()
     # If the reply is "I didn't catch that." followed by meta-instruction, strip the meta part so we don't speak it.
     if re.match(r"^I didn't catch that\.?\s*", text, re.IGNORECASE):
-        rest = re.sub(r"^I didn't catch that\.?\s*", "", text, flags=re.IGNORECASE).strip()
+        rest = re.sub(
+            r"^I didn't catch that\.?\s*", "", text, flags=re.IGNORECASE
+        ).strip()
         if "never use" in rest.lower() or "output your reply as" in rest.lower():
             return "I didn't catch that."
     return text

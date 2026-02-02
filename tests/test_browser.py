@@ -363,22 +363,22 @@ def test_default_demo_scenarios_non_empty() -> None:
         assert "type" in s
 
 
-def test_format_numbered_links() -> None:
-    """Numbered links are formatted so user can say 'open 1', 'open 2', etc."""
-    config = {"search_results_numbered_count": 5}
-    svc = BrowserService(config)
-    links = [
-        {"href": "https://a.example/", "text": "First result", "index": 1},
-        {"href": "https://b.example/", "text": "Second result", "index": 2},
-        {"href": "https://c.example/", "text": "Third", "index": 3},
-    ]
-    out = svc._format_numbered_links(links)
-    assert "1. First result" in out
-    assert "2. Second result" in out
-    assert "3. Third" in out
-    assert "4." not in out
-    out_empty = svc._format_numbered_links([])
-    assert out_empty == ""
+def test_search_returns_only_instruction_not_link_list() -> None:
+    """Search must return only the single 'open N' instruction; never read links aloud."""
+    with patch("modules.browser.service.search_via_api") as mock_api:
+        mock_api.return_value = [
+            {"href": "https://a.example/", "text": "First result"},
+            {"href": "https://b.example/", "text": "Second result"},
+        ]
+        config = {"search_results_numbered_count": 5, "search_use_api": True}
+        svc = BrowserService(config)
+        with patch.object(svc, "_opener"):
+            out = svc.execute(
+                {"action": "search", "query": "test"},
+                on_save_search_results=lambda *a: "run-1",
+            )
+    assert out == "Say 'open 1' through 'open 2' to open a result."
+    assert "First result" not in out and "Second result" not in out
 
 
 def test_build_search_url_always_returns_string() -> None:

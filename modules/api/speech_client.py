@@ -117,6 +117,11 @@ class RemoteSTTEngine(STTEngine):
 
     def transcribe(self, audio_bytes: bytes) -> str:
         """Transcribe audio via remote server."""
+        text, _ = self.transcribe_with_confidence(audio_bytes)
+        return text
+
+    def transcribe_with_confidence(self, audio_bytes: bytes) -> tuple[str, float | None]:
+        """Transcribe via remote server; returns (text, confidence or None)."""
         try:
             audio_base64 = self._client._encode_audio(audio_bytes)
             response = self._client._request(
@@ -125,10 +130,18 @@ class RemoteSTTEngine(STTEngine):
                 json_data={"audio_base64": audio_base64},
                 timeout=30.0,  # Longer timeout for transcription
             )
-            return response.get("text", "").strip()
+            text = response.get("text", "").strip()
+            conf = response.get("confidence")
+            if conf is not None:
+                try:
+                    conf = float(conf)
+                    conf = max(0.0, min(1.0, conf))
+                except (TypeError, ValueError):
+                    conf = None
+            return (text, conf)
         except Exception as e:
             logger.debug("Remote STT transcribe failed: %s", e)
-            return ""
+            return ("", None)
 
 
 class RemoteTTSEngine(TTSEngine):

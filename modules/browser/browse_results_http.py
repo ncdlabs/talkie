@@ -32,7 +32,9 @@ def _render_table(title: str, rows: list[str]) -> str:
   <style>
     :root {{ --bg: #111; --fg: #eee; --accent: #0c6; --muted: #666; }}
     * {{ box-sizing: border-box; }}
-    body {{ font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); margin: 1.5rem; font-size: 1.25rem; line-height: 1.5; }}
+    body {{ font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); margin: 1.5rem; font-size: 1.25rem; line-height: 1.5; display: flex; flex-direction: column; min-height: 100vh; }}
+    .scroll-hint {{ font-size: 1rem; color: var(--muted); text-align: center; padding: 0.5rem 0; flex-shrink: 0; }}
+    .browse-scroll-wrapper {{ flex: 1; min-height: 0; overflow-y: scroll; max-height: calc(100vh - 8rem); }}
     h1 {{ font-size: 1.5rem; color: var(--muted); margin-bottom: 0.5rem; font-weight: 600; }}
     .hint {{ font-size: 1.125rem; color: var(--muted); margin-bottom: 1rem; }}
     table {{ width: 100%; max-width: 56rem; border-collapse: collapse; font-size: 1.25rem; }}
@@ -47,9 +49,11 @@ def _render_table(title: str, rows: list[str]) -> str:
   </style>
 </head>
 <body>
-  <h1>{html_module.escape(title)}</h1>
-  <p class="hint">Say &quot;open 1&quot; through &quot;open {n_results}&quot; to open a result.</p>
-  <table>
+  <p class="scroll-hint">Say &quot;scroll up&quot;</p>
+  <div class="browse-scroll-wrapper">
+    <h1>{html_module.escape(title)}</h1>
+    <p class="hint">Say &quot;open 1&quot; through &quot;open {n_results}&quot; to open a result.</p>
+    <table aria-hidden="true">
     <thead>
       <tr><th scope="col" class="browse-num-cell">#</th><th scope="col">Page title</th><th scope="col">Page description</th></tr>
     </thead>
@@ -57,11 +61,15 @@ def _render_table(title: str, rows: list[str]) -> str:
 {table_rows_html}
     </tbody>
   </table>
+  </div>
+  <p class="scroll-hint">Say &quot;scroll down&quot;</p>
 </body>
 </html>"""
 
 
-def handle_browse_results(request: Request, conn_factory: Callable[[], Any] | None) -> HTMLResponse:
+def handle_browse_results(
+    request: Request, conn_factory: Callable[[], Any] | None
+) -> HTMLResponse:
     """
     Handle GET /browse-results. Query params: run_id (load from SQLite) or url/q/data (legacy base64).
     Returns HTMLResponse (table page or error).
@@ -82,8 +90,12 @@ def handle_browse_results(request: Request, conn_factory: Callable[[], Any] | No
                 text = (r.get("title") or href or "").strip()
                 desc = (r.get("description") or "").strip() or "\u2014"
                 href_esc = html_module.escape(href)
-                text_esc = html_module.escape(text[:120] + ("..." if len(text) > 120 else ""))
-                desc_esc = html_module.escape(desc[:200] + ("..." if len(desc) > 200 else ""))
+                text_esc = html_module.escape(
+                    text[:120] + ("..." if len(text) > 120 else "")
+                )
+                desc_esc = html_module.escape(
+                    desc[:200] + ("..." if len(desc) > 200 else "")
+                )
                 rows.append(
                     f'<tr><td class="browse-num-cell"><span class="browse-num" aria-hidden="true">{idx}</span></td>'
                     f'<td class="browse-title-cell"><a href="{href_esc}">{text_esc}</a></td>'

@@ -141,6 +141,13 @@ def _create_pipeline_and_app(
     # So browse (search) opens the table URL in the user's browser; never the raw search page.
     pipeline.set_on_open_url(lambda url: broadcast({"type": "open_url", "url": url}))
 
+    def _quit_confirmed() -> None:
+        broadcast({"type": "quit"})
+        sys.exit(0)
+
+    pipeline.set_on_quit_confirmed(_quit_confirmed)
+    pipeline.set_on_close_quit_modal(lambda: broadcast({"type": "close_quit_modal"}))
+
     def _on_training_transcription(text: str) -> None:
         try:
             training_repo.add(text)
@@ -156,6 +163,8 @@ def _create_pipeline_and_app(
         "rag_service": rag_service,
         "on_training_transcription": _on_training_transcription,
         "conn_factory": conn_factory,
+        "broadcast": broadcast,
+        "quit_callback": _quit_confirmed,
     }
 
 
@@ -306,6 +315,18 @@ def main() -> None:
     profile_cfg = config.get_profile_config()
     history_list_limit = int(profile_cfg.get("history_list_limit", 100))
 
+    @app.post("/api/quit")
+    async def api_quit():
+        """Quit Talkie (called when user confirms quit in the modal)."""
+        deps["quit_callback"]()
+
+    @app.post("/api/quit-cancel")
+    async def api_quit_cancel():
+        """Cancel quit modal (called when user clicks No)."""
+        pipeline.set_quit_modal_pending(False)
+        deps["broadcast"]({"type": "close_quit_modal"})
+        return {"ok": True}
+
     @app.get("/api/history")
     async def api_history_list():
         records = history_repo.list_recent(limit=history_list_limit)
@@ -334,6 +355,8 @@ def main() -> None:
             history_repo.update_exclude_from_profile(
                 interaction_id, bool(body["exclude_from_profile"])
             )
+        # Invalidate profile cache so the next LLM request uses updated training data.
+        deps["pipeline"].invalidate_profile_cache()
         return {"ok": True}
 
     @app.get("/api/settings")

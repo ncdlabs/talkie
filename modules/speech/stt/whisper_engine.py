@@ -70,6 +70,24 @@ class WhisperEngine(STTEngine):
             self._beam_size = int(self._beam_size)
         if self._beam_size is None or self._beam_size < 1:
             self._beam_size = 1  # faster; use 5 for better accuracy
+        # no_speech_threshold: float or None; when set, pass to transcribe() and filter segments by no_speech_prob
+        ns = cfg.get("no_speech_threshold")
+        self._no_speech_threshold: float | None = None
+        if ns is not None:
+            try:
+                self._no_speech_threshold = float(ns)
+                if self._no_speech_threshold < 0 or self._no_speech_threshold > 1:
+                    self._no_speech_threshold = 0.6
+            except (TypeError, ValueError):
+                pass
+        # min_avg_logprob: float or None; when set, discard segments with avg_logprob below this (e.g. -1)
+        ml = cfg.get("min_avg_logprob")
+        self._min_avg_logprob: float | None = None
+        if ml is not None:
+            try:
+                self._min_avg_logprob = float(ml)
+            except (TypeError, ValueError):
+                pass
 
     def start(self) -> None:
         if self._model is not None:
@@ -116,16 +134,35 @@ class WhisperEngine(STTEngine):
                 np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
             )
             audio_array = np.ascontiguousarray(audio_array)
+            no_speech_threshold = self._no_speech_threshold
             segments, _ = self._model.transcribe(
                 audio_array,
                 language="en",
                 vad_filter=False,
-                no_speech_threshold=None,
+                no_speech_threshold=no_speech_threshold,
                 without_timestamps=True,
                 beam_size=self._beam_size,
             )
             segments_list = list(segments)
-            text = " ".join(s.text.strip() for s in segments_list if s.text).strip()
+
+            def _include_segment(s: Any) -> bool:
+                if not (s.text and s.text.strip()):
+                    return False
+                if self._no_speech_threshold is not None and getattr(
+                    s, "no_speech_prob", None
+                ) is not None:
+                    if s.no_speech_prob > self._no_speech_threshold:
+                        return False
+                if self._min_avg_logprob is not None and getattr(
+                    s, "avg_logprob", None
+                ) is not None:
+                    if s.avg_logprob < self._min_avg_logprob:
+                        return False
+                return True
+
+            text = " ".join(
+                s.text.strip() for s in segments_list if _include_segment(s)
+            ).strip()
             if not text:
                 logger.info(
                     "Whisper returned no text for this chunk (%d segment(s)). Try speaking closer, raising sensitivity in config, or check mic sample rate is 16000 Hz.",
@@ -135,3 +172,69 @@ class WhisperEngine(STTEngine):
         except Exception as e:
             logger.warning("Whisper transcribe error: %s", e)
             return ""
+
+    def transcribe_with_confidence(self, audio_bytes: bytes) -> tuple[str, float | None]:
+        """
+        Transcribe and return (text, confidence 0.0--1.0 or None).
+        Confidence is the mean of (1 - no_speech_prob) over included segments.
+        """
+        if not audio_bytes:
+            return ("", None)
+        if self._model is None:
+            if not self._logged_no_model:
+                logger.warning(
+                    "Whisper model not loaded; STT disabled. Check startup log for 'Failed to load Whisper model'."
+                )
+                self._logged_no_model = True
+            return ("", None)
+        try:
+            audio_array = (
+                np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            )
+            audio_array = np.ascontiguousarray(audio_array)
+            no_speech_threshold = self._no_speech_threshold
+            segments, _ = self._model.transcribe(
+                audio_array,
+                language="en",
+                vad_filter=False,
+                no_speech_threshold=no_speech_threshold,
+                without_timestamps=True,
+                beam_size=self._beam_size,
+            )
+            segments_list = list(segments)
+
+            def _include_segment(s: Any) -> bool:
+                if not (s.text and s.text.strip()):
+                    return False
+                if self._no_speech_threshold is not None and getattr(
+                    s, "no_speech_prob", None
+                ) is not None:
+                    if s.no_speech_prob > self._no_speech_threshold:
+                        return False
+                if self._min_avg_logprob is not None and getattr(
+                    s, "avg_logprob", None
+                ) is not None:
+                    if s.avg_logprob < self._min_avg_logprob:
+                        return False
+                return True
+
+            included = [s for s in segments_list if _include_segment(s)]
+            text = " ".join(s.text.strip() for s in included).strip()
+            conf = None
+            probs = [
+                1.0 - getattr(s, "no_speech_prob", 0.0)
+                for s in included
+                if getattr(s, "no_speech_prob", None) is not None
+            ]
+            if probs:
+                conf = sum(probs) / len(probs)
+                conf = max(0.0, min(1.0, conf))
+            if not text:
+                logger.info(
+                    "Whisper returned no text for this chunk (%d segment(s)). Try speaking closer, raising sensitivity in config, or check mic sample rate is 16000 Hz.",
+                    len(segments_list),
+                )
+            return (text, conf)
+        except Exception as e:
+            logger.warning("Whisper transcribe error: %s", e)
+            return ("", None)

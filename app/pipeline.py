@@ -6,6 +6,7 @@ Runs the capture/transcribe/respond loop in a background thread.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -41,6 +42,25 @@ from persistence.training_repo import TrainingRepo
 from profile.store import LanguageProfile
 
 logger = logging.getLogger(__name__)
+
+
+def _only_search_instruction_if_list(text: str) -> str:
+    """If text looks like a numbered list of search results (1. X 2. Y), return only the instruction sentence."""
+    if not text or not text.strip():
+        return text
+    t = text.strip()
+    if re.search(r"\s+2\.\s+", t) or re.match(r"^\s*1\.\s+.+\s+2\.\s+", t):
+        m = re.search(
+            r"Say\s+'open\s+\d+'\s+through\s+'open\s+(\d+)'\s+to\s+open\s+a\s+result",
+            t,
+            re.I,
+        )
+        return (
+            f"Say 'open 1' through 'open {m.group(1)}' to open a result."
+            if m
+            else "Say open and a number to open a result."
+        )
+    return t
 
 
 def create_pipeline(
@@ -101,7 +121,10 @@ def create_pipeline(
         ollama_cfg.get("base_url", "http://localhost:11434")
     )
     ollama_model = ollama_cfg.get("model_name", "mistral")
-    logger.info("Ollama model from config: %s (change config.yaml and restart Web UI to switch)", ollama_model)
+    logger.info(
+        "Ollama model from config: %s (change config.yaml and restart Web UI to switch)",
+        ollama_model,
+    )
     client = OllamaClient(
         base_url=base_url,
         model_name=ollama_model,
@@ -123,6 +146,27 @@ def create_pipeline(
         accepted_display_cap=accepted_display_cap,
     )
     browse_cfg = config.get("browser", {}) or {}
+    tts_cfg = config.get("tts", {}) or {}
+    stt_cfg = config.get("stt", {}) or {}
+    wait_until_done_before_listen = bool(tts_cfg.get("wait_until_done_before_listen", False))
+    stt_min_confidence: float | None = None
+    try:
+        mc = stt_cfg.get("min_confidence")
+        if mc is not None:
+            stt_min_confidence = float(mc)
+            if stt_min_confidence < 0 or stt_min_confidence > 1:
+                stt_min_confidence = None
+    except (TypeError, ValueError):
+        pass
+    vad_min_level: float | None = None
+    try:
+        vml = (config.get("audio") or {}).get("vad_min_level")
+        if vml is not None:
+            vad_min_level = float(vml)
+            if vad_min_level < 0 or vad_min_level > 1:
+                vad_min_level = None
+    except (TypeError, ValueError):
+        pass
     try:
         browse_cooldown_sec = float(browse_cfg.get("cooldown_after_tts_sec", 12.0))
         browse_cooldown_sec = max(0.0, min(60.0, browse_cooldown_sec))
@@ -139,6 +183,9 @@ def create_pipeline(
         llm_prompt_config=llm_prompt_config,
         auto_sensitivity=auto_sensitivity or {"enabled": False},
         browse_cooldown_after_tts_sec=browse_cooldown_sec,
+        wait_until_done_before_listen=wait_until_done_before_listen,
+        stt_min_confidence=stt_min_confidence,
+        vad_min_level=vad_min_level,
     )
 
 
@@ -159,6 +206,9 @@ class Pipeline:
         llm_prompt_config: dict | None = None,
         auto_sensitivity: dict | None = None,
         browse_cooldown_after_tts_sec: float = 12.0,
+    wait_until_done_before_listen: bool = False,
+    stt_min_confidence: float | None = None,
+    vad_min_level: float | None = None,
     ) -> None:
         self._capture = capture
         self._stt = stt
@@ -169,7 +219,12 @@ class Pipeline:
         self._tts = tts
         self._llm_prompt_config = llm_prompt_config or {}
         self._auto_sensitivity = auto_sensitivity or {"enabled": False}
-        self._browse_cooldown_after_tts_sec = max(0.0, min(60.0, browse_cooldown_after_tts_sec))
+        self._browse_cooldown_after_tts_sec = max(
+            0.0, min(60.0, browse_cooldown_after_tts_sec)
+        )
+        self._wait_until_done_before_listen = bool(wait_until_done_before_listen)
+        self._stt_min_confidence = stt_min_confidence
+        self._vad_min_level = vad_min_level
 
         self._on_status: Callable[[str], None] = lambda _: None
         self._on_response: Callable[[str, int], None] = lambda _t, _i: None
@@ -197,10 +252,16 @@ class Pipeline:
         self._previous_chunk_transcription: str | None = None
         # Do not listen to yourself: filter out our own TTS from being treated as user input.
         self._last_spoken_response: str | None = None
-        self._recent_spoken_responses: list[str] = []  # last N spoken (echo filter against all)
+        self._recent_spoken_responses: list[
+            str
+        ] = []  # last N spoken (echo filter against all)
         self._recent_spoken_max = 3
         # Skip browse commands for N seconds after we spoke (avoid TTS echo / mishear triggering actions).
         self._last_tts_time: float = 0.0
+        # Quit confirmation modal: when True, next "yes"/"no" is handled as quit confirm/cancel.
+        self._quit_modal_pending: bool = False
+        self._on_quit_confirmed: Callable[[], None] = lambda: None
+        self._on_close_quit_modal: Callable[[], None] = lambda: None
         # Executor for parallel work (prefetch profile + recent during regeneration). Created in start(), shut down in stop().
         self._executor: ThreadPoolExecutor | None = None
         self._browse_matcher = BrowseCommandMatcher()
@@ -214,6 +275,22 @@ class Pipeline:
                 x for x in self._recent_spoken_responses if x != s
             ][: self._recent_spoken_max - 1]
             self._last_tts_time = time.monotonic()
+
+    def _should_skip_tts(
+        self,
+        spoken_text: str,
+        is_error_fallback: bool,
+        last_spoken_norm: str,
+    ) -> bool:
+        """Return True if TTS should be skipped (error fallback, empty, or same as last spoken)."""
+        if is_error_fallback:
+            return True
+        if not (spoken_text or "").strip():
+            return True
+        spoken_norm = " ".join((spoken_text or "").strip().lower().split())
+        if last_spoken_norm and spoken_norm == last_spoken_norm:
+            return True
+        return False
 
     def set_ui_callbacks(
         self,
@@ -292,6 +369,18 @@ class Pipeline:
         """Set callback to open a URL (e.g. on main thread or on client when remote). Called when click_link resolves a URL."""
         self._on_open_url = callback if callback is not None else lambda _: None
 
+    def set_quit_modal_pending(self, value: bool) -> None:
+        """When True, next utterance is treated as yes/no for quit confirmation (say or click)."""
+        self._quit_modal_pending = value
+
+    def set_on_quit_confirmed(self, callback: Callable[[], None] | None) -> None:
+        """Set callback invoked when user confirms quit (e.g. say Yes or click Yes)."""
+        self._on_quit_confirmed = callback if callback is not None else lambda: None
+
+    def set_on_close_quit_modal(self, callback: Callable[[], None] | None) -> None:
+        """Set callback invoked when user cancels quit (e.g. say No); used to close the modal in the UI."""
+        self._on_close_quit_modal = callback if callback is not None else lambda: None
+
     def get_web_mode(self) -> bool:
         """True when browse mode is on (voice-controlled web)."""
         return self._web_mode
@@ -329,6 +418,10 @@ class Pipeline:
             except Exception as e:
                 logger.debug("Prefetch list_recent failed: %s", e)
         return (profile_ctx, recent)
+
+    def invalidate_profile_cache(self) -> None:
+        """Invalidate the language profile cache so the next LLM request uses fresh corrections/accepted."""
+        self._profile.invalidate_cache()
 
     def start(self) -> None:
         if self._running:
@@ -414,11 +507,38 @@ class Pipeline:
                 logger.debug("Volume callback failed: %s", e)
                 self._debug("Error (volume callback): %s" % e)
 
+            if (
+                self._vad_min_level is not None
+                and level is not None
+                and level < self._vad_min_level
+            ):
+                self._debug(
+                    "VAD: chunk RMS %.4f below threshold %.4f; skipping STT"
+                    % (level, self._vad_min_level)
+                )
+                continue
+
             self._debug("Audio level (chunk RMS, waveform): %.4f" % level)
             self._debug("Audio chunk received (%d bytes), transcribing..." % len(chunk))
             self._on_status("Transcribing...")
             try:
-                text = self._stt.transcribe(chunk).strip()
+                if (
+                    self._stt_min_confidence is not None
+                    and hasattr(self._stt, "transcribe_with_confidence")
+                ):
+                    text, confidence = self._stt.transcribe_with_confidence(chunk)
+                    text = (text or "").strip()
+                    if (
+                        confidence is not None
+                        and confidence < self._stt_min_confidence
+                    ):
+                        self._debug(
+                            "STT confidence %.2f below threshold %.2f; treating as empty"
+                            % (confidence, self._stt_min_confidence)
+                        )
+                        text = ""
+                else:
+                    text = self._stt.transcribe(chunk).strip()
             except Exception as e:
                 logger.exception("STT transcribe failed: %s", e)
                 self._debug("Error (STT transcribe): %s" % e)
@@ -488,12 +608,24 @@ class Pipeline:
                 min_len = int(min_len) if min_len is not None else 0
             except (TypeError, ValueError):
                 min_len = 0
-            if min_len > 0 and len(text) < min_len:
+            # Allow short transcriptions that are browse commands (e.g. "open 2", "open 6") so open-by-number works.
+            is_short_browse = (
+                min_len > 0
+                and len(text) < min_len
+                and self._web_handler is not None
+                and (
+                    self._browse_matcher.is_browse_command(text)
+                    or self._browse_matcher.is_open_number_only(text)
+                )
+            )
+            if min_len > 0 and len(text) < min_len and not is_short_browse:
                 self._debug(
                     "Transcription too short (%d < %d), skipping LLM to avoid spurious responses"
                     % (len(text), min_len)
                 )
                 continue
+            if is_short_browse:
+                self._debug("Short transcription allowed (browse command): %s" % text)
 
             if not self._speaker_filter.accept(text, chunk):
                 reason = None
@@ -549,13 +681,14 @@ class Pipeline:
                         trans_words = set(nt.split())
                         spoken_words = set(ns.split())
                         if len(trans_words) >= 4 and spoken_words:
-                            if len(trans_words & spoken_words) / len(trans_words) >= 0.75:
+                            if (
+                                len(trans_words & spoken_words) / len(trans_words)
+                                >= 0.75
+                            ):
                                 is_echo = True
                                 break
                 if is_echo:
-                    self._debug(
-                        "Transcription is our own voice (echo); skipping"
-                    )
+                    self._debug("Transcription is our own voice (echo); skipping")
                     continue
 
             # User started speaking again: abort any playing TTS so we can process this (retry).
@@ -563,6 +696,22 @@ class Pipeline:
                 self._tts.stop()
             except Exception as e:
                 logger.debug("TTS stop (abort on new speech) failed: %s", e)
+
+            # Quit confirmation: if modal is pending, only accept "yes" or "no".
+            if self._quit_modal_pending and text:
+                norm = (text or "").strip().lower()
+                if norm in ("yes", "no"):
+                    self._quit_modal_pending = False
+                    if norm == "yes":
+                        self._on_quit_confirmed()
+                        return
+                    try:
+                        self._on_close_quit_modal()
+                    except Exception:
+                        pass
+                    self._on_status("Cancelled.")
+                    self._on_response("Cancelled.", 0)
+                    continue
 
             try:
                 self._on_status("Responding...")
@@ -674,8 +823,11 @@ class Pipeline:
                         else:
                             used_regeneration = True
                         # If model wrongly returned "I didn't catch that" for a clear test phrase or greeting, use transcription.
-                        if used_regeneration and intent_sentence.strip().lower().startswith(
-                            "i didn't catch that"
+                        if (
+                            used_regeneration
+                            and intent_sentence.strip()
+                            .lower()
+                            .startswith("i didn't catch that")
                         ):
                             norm = text.strip().lower().rstrip(".")
                             if norm in (
@@ -717,15 +869,29 @@ class Pipeline:
                     continue
 
                 # Optional web/browse: only respond to commands (search, scroll, click, etc.); do not enter for conversation.
-                if self._web_handler is not None and self._browse_matcher.is_browse_command(
-                    intent_sentence, text
+                if (
+                    self._web_handler is not None
+                    and self._browse_matcher.is_browse_command(intent_sentence, text)
                 ):
+                    # Always use raw transcription for browse so regeneration cannot inject "and chrome", "in Chrome", etc.
+                    browse_utterance = (text or "").strip() or intent_sentence
+                    if self._web_mode:
+                        browse_utterance = self._browse_matcher.first_single_command(
+                            browse_utterance
+                        )
                     # Skip browse during cooldown after we spoke (avoid TTS echo / mishear triggering clicks).
+                    # Exception: allow scroll, go_back, and open N immediately so they feel responsive.
                     if (
                         self._browse_cooldown_after_tts_sec > 0
                         and self._last_tts_time > 0
                         and (time.monotonic() - self._last_tts_time)
                         < self._browse_cooldown_after_tts_sec
+                        and not self._browse_matcher.is_scroll_or_go_back_only(
+                            browse_utterance
+                        )
+                        and not self._browse_matcher.is_open_number_only(
+                            browse_utterance
+                        )
                     ):
                         self._debug(
                             "Browse: skipping (cooldown %.0fs after TTS)"
@@ -733,12 +899,6 @@ class Pipeline:
                         )
                         self._on_status("Listening...")
                         continue
-                    # Always use raw transcription for browse so regeneration cannot inject "and chrome", "in Chrome", etc.
-                    browse_utterance = (text or "").strip() or intent_sentence
-                    if self._web_mode:
-                        browse_utterance = self._browse_matcher.first_single_command(
-                            browse_utterance
-                        )
                     # In web mode only act on a clear command that starts the utterance (wait for command; no echo/continuation).
                     if not self._browse_matcher.starts_with_browse_command(
                         browse_utterance
@@ -799,18 +959,36 @@ class Pipeline:
                             logger.exception("Failed to save interaction: %s", e)
                             interaction_id = 0
                         spoken_text = strip_certainty_from_response(web_response or "")
+                        spoken_text = _only_search_instruction_if_list(spoken_text)
                         self._on_response(spoken_text, interaction_id)
-                        prev_spoken = (self._last_spoken_response or "").strip().lower()
+                        prev_spoken_norm = (
+                            " ".join(
+                                (self._last_spoken_response or "").strip().lower().split()
+                            )
+                            if self._last_spoken_response
+                            else ""
+                        )
                         self._push_spoken(spoken_text)
-                        if prev_spoken != (self._last_spoken_response or "").lower():
-                            try:
-                                self._tts.speak(spoken_text)
-                            except Exception as e:
-                                logger.exception("TTS speak failed: %s", e)
-                        else:
+                        if self._should_skip_tts(
+                            spoken_text, False, prev_spoken_norm
+                        ):
                             self._debug(
                                 "Skipping TTS: same as last spoken (avoid repeating)"
                             )
+                        else:
+                            try:
+                                self._tts.speak(spoken_text)
+                                self._debug(
+                                    "TTS: started speaking (speak again to abort and retry)"
+                                )
+                            except Exception as e:
+                                logger.exception("TTS speak failed: %s", e)
+                                self._debug("Error (TTS): %s" % e)
+                        if self._wait_until_done_before_listen:
+                            try:
+                                self._tts.wait_until_done()
+                            except Exception as e:
+                                logger.debug("TTS wait_until_done: %s", e)
                         self._on_status("Listening...")
                         continue
 
@@ -827,7 +1005,6 @@ class Pipeline:
                     continue
 
                 # Build recent-context data once so we can block repeats on every response path
-                conversation_context = ""
                 recent_reply_norms = set()
                 recent_user_phrase_norms = set()
 
@@ -860,7 +1037,6 @@ class Pipeline:
                             if user:
                                 recent_user_phrase_norms.add(_norm(user))
                         if lines:
-                            conversation_context = "\n\n".join(lines)
                             self._debug(
                                 "Included %d recent turn(s) for context / repeat check"
                                 % len(lines)
@@ -1102,21 +1278,27 @@ class Pipeline:
                     FALLBACK_MESSAGE.strip(),
                     MEMORY_ERROR_MESSAGE.strip(),
                 )
-                if not spoken_text or _norm(spoken_text) != prev_spoken_norm:
+                if self._should_skip_tts(
+                    spoken_text, is_error_fallback, prev_spoken_norm
+                ):
                     if is_error_fallback:
                         self._debug("Skipping TTS: error fallback (show in UI only)")
                     else:
-                        try:
-                            self._tts.speak(spoken_text)
-                            self._debug(
-                                "TTS: started speaking (speak again to abort and retry)"
-                            )
-                        except Exception as e:
-                            logger.exception("TTS speak failed: %s", e)
-                            self._debug("Error (TTS): %s" % e)
+                        self._debug("Skipping TTS: same as last spoken (avoid repeating)")
                 else:
-                    self._debug("Skipping TTS: same as last spoken (avoid repeating)")
-                # Do not wait for TTS to finish; return to listening so user can speak to abort and retry.
+                    try:
+                        self._tts.speak(spoken_text)
+                        self._debug(
+                            "TTS: started speaking (speak again to abort and retry)"
+                        )
+                    except Exception as e:
+                        logger.exception("TTS speak failed: %s", e)
+                        self._debug("Error (TTS): %s" % e)
+                if self._wait_until_done_before_listen:
+                    try:
+                        self._tts.wait_until_done()
+                    except Exception as e:
+                        logger.debug("TTS wait_until_done: %s", e)
                 self._on_status("Listening...")
             except Exception as e:
                 logger.exception("Respond block failed: %s", e)

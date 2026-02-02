@@ -26,6 +26,7 @@ ddgs = "*"
 [dev-packages]
 mypy = "*"
 pytest = "*"
+pytest-cov = "*"
 ruff = "*"
 
 [requires]

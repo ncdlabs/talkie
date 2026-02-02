@@ -9,6 +9,8 @@
 
 ### Code quality and cleanup
 
+- **chunk_rms_level:** Consolidated duplicate implementation from `app/audio_utils.py` and `modules/speech/audio/level.py` into `sdk/audio_utils.py`. App and speech module now use the SDK; `app/audio_utils` and `modules/speech/audio/level` re-export for backward compatibility. Speech server imports `chunk_rms_level` from `sdk.audio_utils`.
+- **Ruff F841:** Removed unused variable `conversation_context` in `app/pipeline.py` and unused mock binding in `tests/test_browser.py`. All ruff checks pass.
 - **Module servers:** Consolidated duplicate error response logic into `BaseModuleServer` helpers: `_service_unavailable_response()`, `_error_response(status_code, error_code, message)`, and `_require_service(service)`. Browser, RAG, and speech module servers now use these helpers instead of inline `JSONResponse` blocks. Metrics attributes are initialized before middleware that uses them.
 - **run.py:** Removed duplicate and redundant imports inside `_maybe_start_local_servers`; added top-level `requests` and `subprocess` where used. Local module server list now comes from `modules.discovery.discover_modules()` instead of a hardcoded list.
 - **Ruff:** Applied `ruff format` project-wide; fixed E402 (module-level import) in `run_web.py`. Audit scope for further consolidation remains in `.cursor/prompts/1-implement-code-cleanup.md`.

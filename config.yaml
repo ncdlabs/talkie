@@ -6,6 +6,8 @@ audio:
   sample_rate: 16000
   # Longer = more time to hear all words (allows pauses between words). Shorter = faster first result but may cut off.
   chunk_duration_sec: 5   # 5 = faster response; 7–10 if you need longer pauses (speech-impaired)
+  # vad_min_level: when set (0.0--1.0 RMS), skip STT when chunk RMS is below this (saves CPU on silence). Set to null to disable.
+  # vad_min_level: null
   # Input sensitivity (gain). 1.0 = normal; 2.0-4.0 = more sensitive for quiet speech. Adjust if too loud or too quiet.
   sensitivity: 3.0
   # Auto sensitivity: if there is some audio (above noise) but STT returns empty, increase sensitivity.
@@ -18,12 +20,18 @@ audio:
 stt:
   # engine: vosk = faster, lower latency; whisper = best accuracy (recommended for speech-impaired users)
   engine: whisper
+  # min_confidence: when set (0.0--1.0), treat transcription as empty when STT confidence is below this (Whisper only; requires transcribe_with_confidence). Set to null to disable.
+  # min_confidence: 0.5
   vosk:
     # For better Vosk accuracy use a larger model, e.g. vosk-model-en-us-0.22 from https://alphacephei.com/vosk/models
     model_path: "models/vosk-model-small-en-us-0.15"
   whisper:
     # model_path: base = fastest; small = good balance; medium = best accuracy (especially impaired speech), needs ~5GB RAM
     model_path: "base"
+    # no_speech_threshold: 0-1; segments with no_speech_prob above this are excluded. Set to null to disable (current behavior).
+    no_speech_threshold: 0.6
+    # min_avg_logprob: exclude segments with avg_logprob below this (e.g. -1 = low confidence). Set to null to disable.
+    # min_avg_logprob: null
 
 ollama:
   # Local Ollama: run `ollama serve` on the host. base_url must be http://localhost:11434.
@@ -131,6 +139,10 @@ llm:
     - scroll up
     - scroll down
 
+    CLOSE TAB
+    - close
+    - close tab
+
     INTERPRETATION RULES
 
     - Prefer the shortest valid command.
@@ -161,6 +173,8 @@ llm:
     - Never output explanations or meta text.
 
 # Text-to-speech: speak Ollama responses (macOS 'say' when engine: say)
+# speak_timeout_sec: max seconds for one TTS utterance (default 300)
+# wait_until_done_before_listen: when true, wait for TTS to finish before returning to Listening (reduces echo; default false)
 # All voice options (use exact name for voice:); get current list with: say -v ?
 #   en_GB: Daniel, Eddy (English (UK)), Flo (English (UK)), Grandma (English (UK)), Grandpa (English (UK)), Reed (English (UK)), Rocko (English (UK)), Sandy (English (UK)), Shelley (English (UK))
 #   en_US: Albert, Bad News, Bahh, Bells, Boing, Bubbles, Cellos, Eddy (English (US)), Fred, Good News, Junior, Jester, Kathy, Ralph, Reed (English (US)), Rocko (English (US)), Samantha, Sandy (English (US)), Shelley (English (US)), Superstar, Trinoids, Whisper, Wobble, Zarvox
@@ -170,6 +184,8 @@ tts:
   enabled: true
   engine: say   # say = macOS built-in
   voice: Daniel   # default male (en_GB); override in Settings or set one of the names above
+  speak_timeout_sec: 300
+  wait_until_done_before_listen: false
 
 persistence:
   db_path: "data/talkie.db"

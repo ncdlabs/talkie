@@ -486,11 +486,29 @@ def _force_go_back_intent_if_uttered(utterance: str, intent: dict) -> None:
             return
 
 
+def _force_close_tab_intent_if_uttered(utterance: str, intent: dict) -> None:
+    """If the user said "close" or "close tab", force action close_tab."""
+    u = (utterance or "").strip().lower()
+    if not u:
+        return
+    for phrase in ("close tab", "close"):
+        if u == phrase or u.startswith(phrase + " "):
+            intent["action"] = "close_tab"
+            intent.pop("query", None)
+            intent.pop("url", None)
+            intent.pop("link_index", None)
+            intent.pop("link_text", None)
+            logger.info("Browse: forced close_tab from utterance")
+            return
+
+
 def create_web_handler(
     config: object,
     ollama_client: object,
     rag_ingest_callback: Callable[[str, str], None] | None = None,
     conn_factory: Callable[[], object] | None = None,
+    broadcast: Callable[[dict], None] | None = None,
+    pipeline: object | None = None,
 ) -> Callable[[str, Callable[[bool], None]], str | None] | None:
     """
     Build the web handler callable for pipeline.set_web_handler.
@@ -564,9 +582,7 @@ def create_web_handler(
                     raw_intent = ollama_client.generate(browse_user, browse_system)
                     intent = parse_web_mode_command(raw_intent)
                 else:
-                    browse_system, browse_user = build_browse_intent_prompts(
-                        utterance
-                    )
+                    browse_system, browse_user = build_browse_intent_prompts(utterance)
                     raw_intent = ollama_client.generate(browse_user, browse_system)
                     intent = parse_browse_intent(raw_intent)
                 _force_search_intent_if_uttered(utterance, intent)
@@ -574,6 +590,7 @@ def create_web_handler(
                 _force_go_back_intent_if_uttered(utterance, intent)
                 _force_click_or_select_intent_if_uttered(utterance, intent)
                 _force_scroll_intent_if_uttered(utterance, intent)
+                _force_close_tab_intent_if_uttered(utterance, intent)
                 action = (intent.get("action") or "").strip().lower()
                 logger.debug("Web search (remote): intent action=%r", action)
 
@@ -585,7 +602,8 @@ def create_web_handler(
                 if action == "browse_off":
                     set_web_mode(False)
                     return "Browse mode is off."
-
+                if action == "close_tab":
+                    return "Close tab is only available when running Talkie locally."
                 # Scroll must run on the client machine (where the user's Chrome is), not the server.
                 if action in (
                     "scroll_up",
@@ -665,6 +683,7 @@ def create_web_handler(
             _force_go_back_intent_if_uttered(utterance, intent)
             _force_click_or_select_intent_if_uttered(utterance, intent)
             _force_scroll_intent_if_uttered(utterance, intent)
+            _force_close_tab_intent_if_uttered(utterance, intent)
             action = (intent.get("action") or "").strip().lower()
             logger.debug("Web search (local): intent action=%r", action)
 
@@ -676,7 +695,17 @@ def create_web_handler(
             if action == "browse_off":
                 set_web_mode(False)
                 return "Browse mode is off."
-            def _on_save_search_results(q: str, search_url: str, links: list) -> str | None:
+            if action == "close_tab":
+                set_quit = (
+                    getattr(pipeline, "set_quit_modal_pending", None)
+                    if pipeline
+                    else None
+                )
+                return browser_service.close_tab(broadcast, set_quit)
+
+            def _on_save_search_results(
+                q: str, search_url: str, links: list
+            ) -> str | None:
                 if not conn_factory:
                     return None
                 from modules.browser.browse_results_repo import save_run
@@ -740,7 +769,12 @@ def register(context: dict) -> None:
         )
         conn_factory = context.get("conn_factory")
         handler = create_web_handler(
-            config, intent_llm, None, conn_factory=conn_factory
+            config,
+            intent_llm,
+            None,
+            conn_factory=conn_factory,
+            broadcast=context.get("broadcast"),
+            pipeline=context.get("pipeline"),
         )
         if handler is not None:
             pipeline.set_web_handler(handler)

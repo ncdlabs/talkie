@@ -16,7 +16,6 @@ from modules.browser.base import FetchResult
 from modules.browser.chrome_opener import ChromeOpener
 from modules.browser.fetcher import HttpFetcher
 from modules.browser.html_content import (
-    extract_h1_from_html,
     extract_links_from_html,
     extract_text_from_html,
     extract_title_from_html,
@@ -104,8 +103,7 @@ class BrowserService:
             0, int(config.get("search_results_numbered_count", 10))
         )
         self._talkie_web_base = (
-            (config.get("talkie_web_base_url") or "").strip()
-            or "http://localhost:8765"
+            (config.get("talkie_web_base_url") or "").strip() or "http://localhost:8765"
         ).rstrip("/")
         # Use search API (structured results only); no fetch of search engine HTML page.
         self._search_use_api = config.get("search_use_api", True)
@@ -125,10 +123,12 @@ class BrowserService:
             href = (link.get("href") or "").strip()[:200]
             text = (link.get("text") or link.get("href") or "").strip()[:80]
             desc = (link.get("description") or "").strip()[:150]
-            payload.append({"href": href, "text": text, "description": desc, "index": i})
-        data_b64 = base64.urlsafe_b64encode(
-            json.dumps(payload).encode("utf-8")
-        ).decode("ascii")
+            payload.append(
+                {"href": href, "text": text, "description": desc, "index": i}
+            )
+        data_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode(
+            "ascii"
+        )
         base_url = self._talkie_web_base
         params = [
             "url=" + quote_plus(search_url),
@@ -140,28 +140,6 @@ class BrowserService:
     def _build_browse_results_url_by_run_id(self, run_id: str) -> str:
         """Build browse-results URL that serves the table from SQLite by run_id."""
         return self._talkie_web_base + "/browse-results?run_id=" + quote_plus(run_id)
-
-    def _format_numbered_links(
-        self, links: list[dict], max_title_len: int = 50
-    ) -> str:
-        """
-        Format the first N links (by config search_results_numbered_count) as
-        "1. Title1, 2. Title2, ..." for display after a search. Numbers match
-        link_index so the user can say "open 3" to open the third link.
-        """
-        n = self._search_results_numbered_count
-        if n <= 0 or not links:
-            return ""
-        taken = links[:n]
-        parts = []
-        for i, link in enumerate(taken, start=1):
-            text = (link.get("text") or link.get("href") or "").strip()
-            if len(text) > max_title_len:
-                text = text[: max_title_len - 3].rstrip() + "..."
-            if not text:
-                text = "link " + str(i)
-            parts.append(f"{i}. {text}")
-        return " ".join(parts)
 
     def build_search_url(self, query: str) -> str:
         """Build search URL from template and query."""
@@ -210,19 +188,17 @@ class BrowserService:
             return ("", [])
         is_html = (result.content_type or "").lower().find("html") >= 0
         if not is_html:
-            self._page_index_cache[url] = {"title": "", "h1s": [], "links": []}
+            self._page_index_cache[url] = {"title": "", "links": []}
             self._trim_page_index_cache()
             return ("", [])
         title = extract_title_from_html(result.text)
-        h1s = extract_h1_from_html(result.text)
         links = extract_links_from_html(result.text, base_url=url)
-        self._page_index_cache[url] = {"title": title, "h1s": h1s, "links": links}
+        self._page_index_cache[url] = {"title": title, "links": links}
         self._trim_page_index_cache()
         logger.debug(
-            "BrowserService: page index cached for %r (title=%r, %d h1s, %d links)",
+            "BrowserService: page index cached for %r (title=%r, %d links)",
             url,
             (title[:40] + "..." if title and len(title) > 40 else title),
-            len(h1s),
             len(links),
         )
         return (title, links)
@@ -358,7 +334,7 @@ class BrowserService:
         if t == "search":
             query = (scenario.get("query") or "").strip()
             return (
-                f"Demo search: say \"search {query}\" to see results in the table "
+                f'Demo search: say "search {query}" to see results in the table '
                 "(search engine page is not opened)."
             )
         if t == "open_url":
@@ -384,6 +360,32 @@ class BrowserService:
         if name in ("third", "three", "3"):
             return self.run_demo(2)
         return self.run_demo(0)
+
+    def close_tab(
+        self,
+        broadcast: Callable[[dict], None] | None = None,
+        set_quit_pending: Callable[[bool], None] | None = None,
+    ) -> str:
+        """
+        Close the active browser tab. If the active tab is the Talkie UI (main tab),
+        show quit confirmation instead: broadcast show_quit_modal and set_quit_pending(True).
+        broadcast and set_quit_pending are optional (e.g. from run_web); when None, just close the tab.
+        """
+        active_url = self._opener.get_active_tab_url()
+        base = (self._talkie_web_base or "").rstrip("/")
+        if base and active_url:
+            # Compare origin: active tab is Talkie if it starts with the base URL
+            if active_url.rstrip("/").startswith(base) or base in active_url:
+                if broadcast is not None and set_quit_pending is not None:
+                    try:
+                        broadcast({"type": "show_quit_modal"})
+                        set_quit_pending(True)
+                    except Exception as e:
+                        logger.debug(
+                            "close_tab broadcast/set_quit_pending failed: %s", e
+                        )
+                    return "Quit Talkie? Say or click Yes or No."
+        return self._opener.close_active_tab()
 
     def execute(
         self,
@@ -452,14 +454,13 @@ class BrowserService:
                     links = search_via_api(
                         query,
                         max_results=max(
-                            self._search_results_numbered_count, 30,
+                            self._search_results_numbered_count,
+                            30,
                         ),
                     )
                     search_url_for_save = self.build_search_url(query)
                 except Exception as e:
-                    logger.debug(
-                        "BrowserService: search API failed: %s", e
-                    )
+                    logger.debug("BrowserService: search API failed: %s", e)
             if not links:
                 try:
                     url = self.build_search_url(query)
@@ -471,9 +472,7 @@ class BrowserService:
                     _title, links = self._get_or_build_page_index(url)
                     search_url_for_save = url
                 except Exception as e:
-                    logger.debug(
-                        "BrowserService: page index for search failed: %s", e
-                    )
+                    logger.debug("BrowserService: page index for search failed: %s", e)
             # Build table from API/fetch results; save to SQLite; serve HTML from it. Do not show original search page.
             run_id = None
             if on_save_search_results:
@@ -484,13 +483,9 @@ class BrowserService:
                         links[: self._search_results_numbered_count],
                     )
                 except Exception as e:
-                    logger.debug(
-                        "BrowserService: save search results failed: %s", e
-                    )
+                    logger.debug("BrowserService: save search results failed: %s", e)
             if run_id:
-                browse_results_url = self._build_browse_results_url_by_run_id(
-                    run_id
-                )
+                browse_results_url = self._build_browse_results_url_by_run_id(run_id)
             else:
                 browse_results_url = self._build_browse_results_url(
                     search_url_for_save, query, links
@@ -507,7 +502,8 @@ class BrowserService:
             # Only ever open the table URL (browse_results_url). Never open the search engine page.
             logger.info(
                 "Browse search: opening table only (never search page): %s",
-                browse_results_url[:80] + ("..." if len(browse_results_url) > 80 else ""),
+                browse_results_url[:80]
+                + ("..." if len(browse_results_url) > 80 else ""),
             )
             if on_open_url:
                 try:
@@ -518,11 +514,10 @@ class BrowserService:
             try:
                 self._opener.open_in_new_tab(browse_results_url)
             except Exception as e:
-                logger.exception(
-                    "BrowserService: open browse-results failed: %s", e
-                )
+                logger.exception("BrowserService: open browse-results failed: %s", e)
                 return "Could not open the results page in the browser."
             n = min(len(links), self._search_results_numbered_count)
+            # Only state the single instruction. Do not read or speak the list of results.
             msg = (
                 f"Say 'open 1' through 'open {n}' to open a result."
                 if n > 0

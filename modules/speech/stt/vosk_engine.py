@@ -67,3 +67,8 @@ class VoskEngine(STTEngine):
         except Exception as e:
             logger.warning("Vosk transcribe error: %s", e)
             return ""
+
+    def transcribe_with_confidence(self, audio_bytes: bytes) -> tuple[str, float | None]:
+        """Transcribe and return (text, confidence). Vosk does not expose confidence; returns (text, None)."""
+        text = self.transcribe(audio_bytes)
+        return (text, None)

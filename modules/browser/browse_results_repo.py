@@ -18,7 +18,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _with_connection(conn_factory: Callable[[], Any], fn: Callable[[Any], Any], commit: bool = False) -> Any:
+def _with_connection(
+    conn_factory: Callable[[], Any], fn: Callable[[Any], Any], commit: bool = False
+) -> Any:
     conn = conn_factory()
     try:
         result = fn(conn)
@@ -93,14 +95,16 @@ def get_run(conn_factory: Callable[[], Any], run_id: str) -> dict | None:
         query = ""
         for r in cur.fetchall():
             query = query or (r[1] or "")
-            rows.append({
-                "row_num": r[0],
-                "query": r[1] or "",
-                "search_url": r[2] or "",
-                "href": r[3] or "",
-                "title": r[4] or "",
-                "description": r[5] or "",
-            })
+            rows.append(
+                {
+                    "row_num": r[0],
+                    "query": r[1] or "",
+                    "search_url": r[2] or "",
+                    "href": r[3] or "",
+                    "title": r[4] or "",
+                    "description": r[5] or "",
+                }
+            )
         if not rows:
             return None
         return {"query": query, "rows": rows}

@@ -154,7 +154,14 @@ class SpeechFactory:
                 voice = tts_cfg.get("voice")
             if not voice:
                 voice = "Daniel"
-            return SayEngine(voice=voice)
+            timeout = 300.0
+            try:
+                t = tts_cfg.get("speak_timeout_sec")
+                if t is not None:
+                    timeout = float(t)
+            except (TypeError, ValueError):
+                pass
+            return SayEngine(voice=voice, speak_timeout_sec=timeout)
         return NoOpTTSEngine()
 
     def create_speaker_filter(self) -> Any:

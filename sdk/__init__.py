@@ -1,6 +1,6 @@
 """
 Talkie SDK: common library for app and modules.
-Use for config section access, speech abstractions, module discovery, and logging.
+Use for config section access, speech abstractions, module discovery, audio utils, and logging.
 
 Example:
     from sdk import get_rag_section, get_browser_section
@@ -8,6 +8,7 @@ Example:
 
     from sdk import AudioCapture, STTEngine  # abstractions
     from sdk import get_module_config_paths, discover_modules
+    from sdk import chunk_rms_level, INT16_MAX  # audio
     from sdk import get_logger
 """
 
@@ -24,11 +25,14 @@ from sdk.abstractions import (
     STTEngine,
     TTSEngine,
 )
+from sdk.audio_utils import INT16_MAX, chunk_rms_level
 from sdk.config import get_browser_section, get_rag_section, get_section
 from sdk.discovery import discover_modules, get_module_config_paths
 from sdk.logging import get_logger
 
 __all__ = [
+    "INT16_MAX",
+    "chunk_rms_level",
     "AudioCapture",
     "MicrophoneError",
     "NoOpCapture",

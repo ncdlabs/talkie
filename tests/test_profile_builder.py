@@ -74,6 +74,13 @@ def test_all_combined() -> None:
     assert "\n\n" in out
 
 
+def test_build_profile_text_training_facts_none_default() -> None:
+    out = build_profile_text("Context.", [], [], training_facts=None)
+    assert "User context" in out
+    assert "Context." in out
+    assert "Facts the user has told you" not in out
+
+
 def test_long_lists_capped() -> None:
     corrections = [(f"o{i}", f"c{i}") for i in range(100)]
     out = build_profile_text(None, corrections, [])

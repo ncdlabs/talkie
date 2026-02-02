@@ -17,7 +17,11 @@ class BrowseCommandMatcher:
         if not u:
             return False
         # Relaxed: "search" with no space (e.g. "Search...topic"), and "searched for" (e.g. "I searched for X").
-        if u.startswith("search") or " searched for " in u or u.startswith("searched for "):
+        if (
+            u.startswith("search")
+            or " searched for " in u
+            or u.startswith("searched for ")
+        ):
             return True
         return (
             "searching for " in u
@@ -100,6 +104,17 @@ class BrowseCommandMatcher:
             or u.startswith("browse off")
         )
 
+    def _looks_like_close_tab(self, s: str) -> bool:
+        u = (s or "").strip().lower()
+        if not u:
+            return False
+        return (
+            u == "close tab"
+            or u == "close"
+            or u.startswith("close tab ")
+            or u.startswith("close ")
+        )
+
     def _is_browse_command_single(self, s: str) -> bool:
         return (
             self._looks_like_search(s)
@@ -108,6 +123,7 @@ class BrowseCommandMatcher:
             or self._looks_like_click_or_select(s)
             or self._looks_like_scroll(s)
             or self._looks_like_mode_toggle(s)
+            or self._looks_like_close_tab(s)
         )
 
     def is_browse_command(self, *candidates: str) -> bool:
@@ -160,6 +176,9 @@ class BrowseCommandMatcher:
             "stop browsing",
             "browse on",
             "browse off",
+            "close tab",
+            "close ",
+            "close",
             "back ",
             "back",
         )
@@ -170,6 +189,40 @@ class BrowseCommandMatcher:
         if u == "browse" or u.startswith("browse "):
             return True
         return False
+
+    def is_scroll_or_go_back_only(self, utterance: str) -> bool:
+        """True if the (first) command is only scroll or go_back. Used to allow these during post-TTS cooldown."""
+        cmd = self.first_single_command(utterance or "").strip().lower()
+        if not cmd:
+            return False
+        return self._looks_like_scroll(cmd) or self._looks_like_go_back(cmd)
+
+    def is_open_number_only(self, utterance: str) -> bool:
+        """True if the utterance is specifically 'open N' (open result by number). Used to allow open during cooldown."""
+        u = (utterance or "").strip().lower()
+        if not u or not (u.startswith("open ") or u.startswith("open the ")):
+            return False
+        rest = u.replace("open the ", "", 1).replace("open ", "", 1).strip().rstrip(".")
+        if not rest:
+            return False
+        # Digit 1-10 (allow trailing period from STT)
+        if rest.isdigit():
+            n = int(rest)
+            return 1 <= n <= 10
+        # Word one..ten (STT often produces "open six" etc.)
+        words = (
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+        )
+        return rest in words
 
     def first_single_command(self, utterance: str, max_len: int = 80) -> str:
         """
@@ -191,6 +244,7 @@ class BrowseCommandMatcher:
                     or self._looks_like_go_back(first)
                     or self._looks_like_click_or_select(first)
                     or self._looks_like_scroll(first)
+                    or self._looks_like_close_tab(first)
                 ):
                     return first[:max_len] if len(first) > max_len else first
                 return first[:max_len] if len(first) > max_len else first

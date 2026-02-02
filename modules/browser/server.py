@@ -70,9 +70,9 @@ class BrowserModuleServer(BaseModuleServer):
                     )
 
                     utterance = data.get("utterance", "")
-                    web_mode_system_prompt = (
-                        self._config.get("llm") or {}
-                    ).get("web_mode_system_prompt")
+                    web_mode_system_prompt = (self._config.get("llm") or {}).get(
+                        "web_mode_system_prompt"
+                    )
                     if web_mode_system_prompt:
                         browse_system, browse_user = build_web_mode_prompts(
                             utterance, system_prompt=web_mode_system_prompt

@@ -81,11 +81,6 @@ _VOICE_GENDER: dict[str, str] = {
 _LANG_RE = re.compile(r"\b[a-z]{2}_[A-Z]{2}\b")
 
 
-def get_available_voices() -> list[str]:
-    """Return list of macOS 'say' voice names (e.g. Alex, Samantha). Empty if not macOS or say unavailable."""
-    return [v["name"] for v in get_available_voices_with_gender()]
-
-
 def get_available_voices_with_gender() -> list[dict[str, str]]:
     """Return list of {name, gender} for macOS 'say' voices. gender is 'male', 'female', or 'unknown'."""
     import shutil
@@ -130,8 +125,13 @@ class SayEngine(TTSEngine):
     can finish even if the app is closing. stop() terminates current playback.
     """
 
-    def __init__(self, voice: str | None = None) -> None:
+    def __init__(
+        self,
+        voice: str | None = None,
+        speak_timeout_sec: float = 300.0,
+    ) -> None:
         self._voice = voice
+        self._speak_timeout_sec = max(1.0, min(3600.0, float(speak_timeout_sec)))
         self._speak_thread: threading.Thread | None = None
         self._speak_lock = threading.Lock()
         self._current_process: subprocess.Popen | None = None
@@ -162,7 +162,7 @@ class SayEngine(TTSEngine):
         with self._speak_lock:
             t = self._speak_thread
         if t is not None and t.is_alive():
-            t.join(timeout=300)
+            t.join(timeout=int(self._speak_timeout_sec))
 
     def stop(self) -> None:
         """Abort current playback so the user can interrupt by speaking again."""
@@ -194,7 +194,7 @@ class SayEngine(TTSEngine):
             )
             with self._speak_lock:
                 self._current_process = proc
-            proc.wait(timeout=300)
+            proc.wait(timeout=int(self._speak_timeout_sec))
         except subprocess.TimeoutExpired:
             if proc is not None and proc.poll() is None:
                 proc.kill()

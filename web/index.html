@@ -279,6 +279,11 @@
     }
     #statusbar.connected { color: var(--accent); }
     #statusbar.disconnected { color: #c66; }
+    #statusbar-activity {
+      flex-shrink: 0;
+      margin-right: 0.5rem;
+      font-weight: 500;
+    }
     #statusbar-log {
       flex: 1;
       min-width: 0;
@@ -316,6 +321,27 @@
     }
     .statusbar-refresh:hover { opacity: 0.9; }
     .statusbar-refresh:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    /* Floating status pill: visible on all panels and when tab is in background (via title) */
+    #statusPill {
+      position: fixed;
+      bottom: 32px;
+      right: 0.75rem;
+      z-index: 40;
+      font-size: 0.8125rem;
+      color: var(--fg);
+      background: rgba(0, 0, 0, 0.82);
+      border: 1px solid var(--muted);
+      border-radius: 999px;
+      padding: 0.35rem 0.75rem;
+      max-width: 14rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    }
+    #statusPill.listening { border-color: var(--accent); color: var(--accent); }
+    #statusPill.responding { border-color: var(--accent); color: var(--accent); }
     body { padding-bottom: 36px; }
     /* Help modal */
     #helpOverlay {
@@ -407,6 +433,29 @@
     }
     #enrollModal .enroll-actions { display: flex; gap: var(--spacing); margin-top: var(--spacing); }
     #enrollModal .enroll-actions button { flex: 1; }
+    /* Quit confirmation modal */
+    #quitOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 220;
+      align-items: center;
+      justify-content: center;
+      padding: var(--spacing);
+    }
+    #quitOverlay.visible { display: flex; }
+    #quitModal {
+      background: var(--bg);
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      max-width: 24rem;
+      width: 100%;
+      padding: var(--spacing-lg);
+    }
+    #quitModal h2 { margin: 0 0 var(--spacing); font-size: 1.25rem; }
+    #quitModal .quit-actions { display: flex; gap: var(--spacing); margin-top: var(--spacing); }
+    #quitModal .quit-actions button { flex: 1; }
   </style>
 </head>
 <body>
@@ -437,6 +486,7 @@
             <tr><th>Navigation</th><td>&quot;back&quot;</td></tr>
             <tr><th>Open link</th><td>&quot;open&quot; + target (position or text)</td></tr>
             <tr><th>Scroll</th><td>&quot;scroll up&quot;, &quot;scroll down&quot;</td></tr>
+            <tr><th>Close tab</th><td>&quot;close&quot;, &quot;close tab&quot; (on main tab: quit confirmation)</td></tr>
             <tr><th><kbd>H</kbd> or <kbd>h</kbd></th><td>Show this browse help</td></tr>
             <tr><th><kbd>Esc</kbd></th><td>Close help</td></tr>
           </tbody>
@@ -454,6 +504,16 @@
       <div class="enroll-actions">
         <button type="button" id="enrollCancel">Cancel</button>
         <button type="button" id="enrollDoneSpeaking" style="display:none;">Done speaking</button>
+      </div>
+    </div>
+  </div>
+  <div id="quitOverlay" role="dialog" aria-modal="true" aria-labelledby="quitModalTitle" aria-hidden="true">
+    <div id="quitModal">
+      <h2 id="quitModalTitle">Quit Talkie?</h2>
+      <p>Say or click Yes to quit, No to cancel.</p>
+      <div class="quit-actions">
+        <button type="button" id="quitYes">Yes</button>
+        <button type="button" id="quitNo">No</button>
       </div>
     </div>
   </div>
@@ -489,6 +549,7 @@
   </main>
 
   <div id="panel-history" class="panel">
+    <p>Corrections and rows with &quot;Use for learning&quot; checked are included in your language profile and sent to the LLM with each request, so it learns your preferred wording.</p>
     <p>Recent interactions. Select a row to edit correction.</p>
     <table id="historyTable">
       <thead><tr><th>Time</th><th>You said</th><th>Response</th><th>Corrected</th><th>Use for learning</th></tr></thead>
@@ -547,7 +608,8 @@
   </div>
 
   <div id="toastContainer" aria-live="polite"></div>
-  <div id="statusbar" class="disconnected" role="status" aria-live="polite"><span id="statusbar-log" class="log" aria-hidden="true"></span><span id="statusbar-right"><span id="statusbar-conn" role="img" aria-label="Web UI: disconnected" title="Web UI: disconnected"></span><button type="button" id="statusbar-refresh" class="statusbar-refresh" aria-label="Reconnect" title="Reconnect"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button></span></div>
+  <div id="statusPill" role="status" aria-live="polite" aria-label="Assistant status">Stopped</div>
+  <div id="statusbar" class="disconnected" role="status" aria-live="polite"><span id="statusbar-activity" class="activity">Stopped</span><span id="statusbar-log" class="log" aria-hidden="true"></span><span id="statusbar-right"><span id="statusbar-conn" role="img" aria-label="Web UI: disconnected" title="Web UI: disconnected"></span><button type="button" id="statusbar-refresh" class="statusbar-refresh" aria-label="Reconnect" title="Reconnect"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button></span></div>
 
   <script>
     (function () {
@@ -575,6 +637,9 @@
       const elStatus = document.getElementById('status');
       const elStatusHint = document.getElementById('statusHint');
       const elStatusbar = document.getElementById('statusbar');
+      const elStatusPill = document.getElementById('statusPill');
+      const BASE_TITLE = document.title || 'Talkie';
+      let currentStatusText = 'Stopped';
       const elResponse = document.getElementById('response');
       const elVolume = document.getElementById('volumeBarFill');
       const elDebug = document.getElementById('debug');
@@ -591,6 +656,21 @@
       var ICON_CONNECTED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>';
       var ICON_DISCONNECTED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>';
       var ICON_CONNECTING = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+      function setMainStatus(text) {
+        var t = (text || '').trim() || 'Stopped';
+        currentStatusText = t;
+        elStatus.textContent = t;
+        var actEl = document.getElementById('statusbar-activity');
+        if (actEl) actEl.textContent = t;
+        if (elStatusPill) {
+          elStatusPill.textContent = t;
+          elStatusPill.className = '';
+          if (/listening/i.test(t)) elStatusPill.classList.add('listening');
+          else if (/responding|executing|browse/i.test(t)) elStatusPill.classList.add('responding');
+        }
+        if (document.hidden) document.title = BASE_TITLE + ' — ' + t;
+      }
+
       function updateStatusbar() {
         const connEl = document.getElementById('statusbar-conn');
         const logEl = document.getElementById('statusbar-log');
@@ -620,8 +700,15 @@
         updateStatusbar();
       }
 
+      if (typeof document.hidden !== 'undefined') {
+        document.addEventListener('visibilitychange', function () {
+          if (document.hidden) document.title = BASE_TITLE + ' — ' + currentStatusText;
+          else document.title = BASE_TITLE;
+        });
+      }
+
       function setConnected() {
-        elStatus.textContent = 'Connected';
+        setMainStatus('Connected');
         elStatusHint.style.display = 'none';
         var moduleHintEl = document.getElementById('moduleHint');
         if (moduleHintEl) moduleHintEl.style.display = 'none';
@@ -638,7 +725,7 @@
       function connect() {
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         elStatusHint.style.display = 'none';
-        elStatus.textContent = 'Connecting...';
+        setMainStatus('Connecting...');
         connectionLabel = 'Web UI: connecting…';
         statusbarClass = '';
         updateStatusbar();
@@ -665,16 +752,16 @@
           var moduleHintEl = document.getElementById('moduleHint');
           if (moduleHintEl) moduleHintEl.style.display = 'block';
           if (ev.code === 1006) {
-            elStatus.textContent = 'Server not reachable';
+            setMainStatus('Server not reachable');
             elStatusHint.style.display = '';
           }
           if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
             reconnectAttempts += 1;
             const delay = Math.min(2000 * Math.pow(1.5, reconnectAttempts - 1), 15000);
-            if (ev.code !== 1006) elStatus.textContent = 'Disconnected. Reconnecting in ' + Math.round(delay / 1000) + 's...';
+            if (ev.code !== 1006) setMainStatus('Disconnected. Reconnecting in ' + Math.round(delay / 1000) + 's...');
             reconnectTimer = setTimeout(function () { connect(); }, delay);
           } else {
-            if (ev.code !== 1006) elStatus.textContent = 'Disconnected';
+            if (ev.code !== 1006) setMainStatus('Disconnected');
           }
         };
         ws.onmessage = function (ev) {
@@ -682,15 +769,22 @@
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === 'status') {
-              elStatus.textContent = msg.value;
+              setMainStatus(msg.value);
               if (msg.hasOwnProperty('web_mode')) window.__webMode = !!msg.web_mode;
             }
             else if (msg.type === 'response') {
               elResponse.textContent = msg.text || '';
               elResponse.classList.remove('error');
               if (msg.text && typeof window.speechSynthesis !== 'undefined') {
+                var toSpeak = msg.text;
+                if (/\s+2\.\s+/.test(toSpeak) || /^\s*1\.\s+.+\s+2\.\s+/.test(toSpeak)) {
+                  var instructionMatch = toSpeak.match(/Say\s+'open\s+(\d+)'\s+through\s+'open\s+(\d+)'\s+to\s+open\s+a\s+result/);
+                  toSpeak = instructionMatch
+                    ? ("Say 'open 1' through 'open " + instructionMatch[2] + "' to open a result.")
+                    : "Say open and a number to open a result.";
+                }
                 window.speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(msg.text);
+                const u = new SpeechSynthesisUtterance(toSpeak);
                 if (window.ttsVoice) u.voice = window.ttsVoice;
                 window.speechSynthesis.speak(u);
               }
@@ -705,6 +799,18 @@
               setLastLog(debugMsg);
             } else if (msg.type === 'training_fact_added') {
               if (typeof onTrainingFactAdded === 'function') onTrainingFactAdded();
+            } else if (msg.type === 'show_quit_modal') {
+              var quitOverlay = document.getElementById('quitOverlay');
+              if (quitOverlay) {
+                quitOverlay.classList.add('visible');
+                quitOverlay.setAttribute('aria-hidden', 'false');
+              }
+            } else if (msg.type === 'close_quit_modal') {
+              var quitOverlay = document.getElementById('quitOverlay');
+              if (quitOverlay) {
+                quitOverlay.classList.remove('visible');
+                quitOverlay.setAttribute('aria-hidden', 'true');
+              }
             }
           } catch (e) {}
         };
@@ -791,7 +897,7 @@
             setModuleButtonsState(module);
           });
         }).catch(function (err) {
-          elStatus.textContent = 'Mic error: ' + (err.message || 'denied');
+          setMainStatus('Mic error: ' + (err.message || 'denied'));
         });
       }
 
@@ -817,7 +923,7 @@
         btn.disabled = true;
         btn.addEventListener('click', function () {
           if (!ws || ws.readyState !== WebSocket.OPEN) {
-            elStatus.textContent = 'Connect to server first (use refresh in status bar).';
+            setMainStatus('Connect to server first (use refresh in status bar).');
             return;
           }
           if (activeModule === m) {
@@ -832,7 +938,7 @@
       if (statusbarRefresh) statusbarRefresh.addEventListener('click', function () {
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         reconnectAttempts = 0;
-        elStatus.textContent = 'Connecting...';
+        setMainStatus('Connecting...');
         connect();
       });
       var logCopyBtn = document.getElementById('logCopy');
@@ -896,6 +1002,24 @@
         if (helpOverlay) {
           helpOverlay.addEventListener('click', function (e) {
             if (e.target === helpOverlay) hideHelp();
+          });
+        }
+        var quitYes = document.getElementById('quitYes');
+        var quitNo = document.getElementById('quitNo');
+        var quitOverlay = document.getElementById('quitOverlay');
+        if (quitYes) {
+          quitYes.addEventListener('click', function () {
+            fetch(location.origin + '/api/quit', { method: 'POST' }).catch(function () {});
+          });
+        }
+        if (quitNo) {
+          quitNo.addEventListener('click', function () {
+            fetch(location.origin + '/api/quit-cancel', { method: 'POST' }).then(function () {
+              if (quitOverlay) {
+                quitOverlay.classList.remove('visible');
+                quitOverlay.setAttribute('aria-hidden', 'true');
+              }
+            }).catch(function () {});
           });
         }
       })();

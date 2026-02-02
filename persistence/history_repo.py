@@ -339,6 +339,19 @@ class HistoryRepo:
 
         return with_connection(self._connector, query)
 
+    def delete_all(self) -> int:
+        """Delete all interactions. Returns number deleted."""
+
+        def delete(conn: sqlite3.Connection) -> int:
+            cur = conn.execute("DELETE FROM interactions")
+            return cur.rowcount
+
+        try:
+            return with_connection(self._connector, delete, commit=True)
+        except sqlite3.Error as e:
+            logger.exception("HistoryRepo.delete_all failed: %s", e)
+            raise
+
     def delete_interactions(self, interaction_ids: list[int]) -> int:
         """Delete interactions by id. Returns number deleted."""
         if not interaction_ids:

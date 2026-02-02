@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Callable, Generator, TypeVar
+from typing import Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -113,16 +113,3 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, check_same_thread=False)
     _apply_pragmas(conn)
     return conn
-
-
-def connection_context(db_path: str) -> Generator[sqlite3.Connection, None, None]:
-    """Context manager yielding a connection that is committed and closed on exit."""
-    conn = get_connection(db_path)
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()

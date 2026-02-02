@@ -1,6 +1,6 @@
 # Talkie SDK
 
-The Talkie SDK is the single internal library used by the app and all modules. It provides config section access, speech abstractions, module discovery, and logging so shared logic lives in one place and modules follow a consistent contract.
+The Talkie SDK is the single internal library used by the app and all modules. It provides config section access, speech abstractions, audio utilities, module discovery, and logging so shared logic lives in one place and modules follow a consistent contract.
 
 ## Where the SDK sits
 
@@ -31,6 +31,24 @@ from sdk import get_rag_section, get_browser_section
 raw = load_config()  # or app config dict
 rag_cfg = get_rag_section(raw)
 browser_cfg = get_browser_section(raw)
+```
+
+## Audio utils
+
+Shared audio helpers used by the pipeline and the speech module:
+
+- **`sdk.chunk_rms_level(chunk: bytes | None) -> float`**  
+  Returns RMS level of an int16 little-endian audio chunk normalized to 0.0--1.0. Returns 0.0 for None or empty/short chunk.
+
+- **`sdk.INT16_MAX`**  
+  Constant 32767 for int16 sample bounds.
+
+Example:
+
+```python
+from sdk import chunk_rms_level, INT16_MAX
+
+level = chunk_rms_level(audio_chunk)
 ```
 
 ## Abstractions

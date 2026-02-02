@@ -83,7 +83,7 @@ class SpeechModuleServer(BaseModuleServer):
                 if chunk is None:
                     return {"audio_base64": "", "level": 0.0}
                 # Calculate level
-                from app.audio_utils import chunk_rms_level
+                from sdk.audio_utils import chunk_rms_level
 
                 level = chunk_rms_level(chunk)
                 audio_base64 = base64.b64encode(chunk).decode("utf-8")
@@ -126,14 +126,21 @@ class SpeechModuleServer(BaseModuleServer):
 
         @self._app.post("/stt/transcribe")
         async def stt_transcribe(request: Request) -> dict[str, Any]:
-            """Transcribe audio."""
+            """Transcribe audio. Returns text and optional confidence (0--1) when the engine supports it."""
             try:
                 if r := self._require_service(self._components):
                     return r
                 data = await request.json()
                 audio_base64 = data.get("audio_base64", "")
                 audio_bytes = base64.b64decode(audio_base64)
-                text = self._components.stt.transcribe(audio_bytes)
+                stt = self._components.stt
+                if hasattr(stt, "transcribe_with_confidence"):
+                    text, confidence = stt.transcribe_with_confidence(audio_bytes)
+                    out: dict[str, Any] = {"text": text}
+                    if confidence is not None:
+                        out["confidence"] = confidence
+                    return out
+                text = stt.transcribe(audio_bytes)
                 return {"text": text}
             except Exception as e:
                 logger.exception("STT transcribe failed: %s", e)
