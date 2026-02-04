@@ -14,7 +14,12 @@ from sdk import (
     NoOpSTTEngine,
     NoOpTTSEngine,
 )
-from app.pipeline import Pipeline, _only_search_instruction_if_list, create_pipeline
+from app.pipeline import (
+    Pipeline,
+    _looks_like_malformed_regeneration,
+    _only_search_instruction_if_list,
+    create_pipeline,
+)
 from persistence.database import init_database
 from persistence.history_repo import HistoryRepo
 
@@ -54,6 +59,30 @@ def test_only_search_instruction_if_list_numbered_list_with_say_open_match() -> 
     assert "Say 'open 1'" in out
     assert "open 3" in out
     assert out == "Say 'open 1' through 'open 3' to open a result."
+
+
+# ---- _looks_like_malformed_regeneration ----
+def test_looks_like_malformed_regeneration_empty_or_plain_false() -> None:
+    assert _looks_like_malformed_regeneration("") is False
+    assert _looks_like_malformed_regeneration("I need the bathroom.") is False
+    assert _looks_like_malformed_regeneration("Need bathroom.") is False
+
+
+def test_looks_like_malformed_regeneration_list_or_meta_true() -> None:
+    assert _looks_like_malformed_regeneration('1. "Feed the bathroom" (90%)\n2. "Ready" (10%)') is True
+    assert _looks_like_malformed_regeneration("1. First option") is True
+    assert _looks_like_malformed_regeneration("Something (90%)") is True
+
+
+def test_looks_like_malformed_regeneration_multiple_sentences_true() -> None:
+    # Model concatenated previous response with current phrase (irrelevant context).
+    assert _looks_like_malformed_regeneration("I want water. Ready! Lead bathroom.") is True
+    assert _looks_like_malformed_regeneration("Hello. How are you?") is True
+
+
+def test_looks_like_malformed_regeneration_single_sentence_false() -> None:
+    assert _looks_like_malformed_regeneration("I need to use the bathroom.") is False
+    assert _looks_like_malformed_regeneration("Need bathroom.") is False
 
 
 # ---- create_pipeline ----

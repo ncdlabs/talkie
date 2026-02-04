@@ -1,6 +1,7 @@
 """
 Core speech abstractions: interfaces and no-op implementations.
-Used by the pipeline and by the speech module; concrete implementations live in modules.speech.
+Used by the pipeline and by the speech module. Concrete implementations live in
+talkie-module-speech; core uses these no-ops or remote API clients when the speech server is configured.
 """
 
 from __future__ import annotations

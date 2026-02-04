@@ -98,7 +98,7 @@ def test_deep_merge_override_replaces_non_dict() -> None:
 def test_load_config_missing_root_raises(tmp_path: Path) -> None:
     missing = tmp_path / "nonexistent.yaml"
     with patch.dict(os.environ, {"TALKIE_CONFIG": str(missing)}):
-        with patch.object(config, "_get_module_config_paths", return_value=[]):
+        with patch.object(config, "_get_module_configs_by_id", return_value=[]):
             with pytest.raises(FileNotFoundError) as exc_info:
                 load_config()
             assert "Config not found" in str(exc_info.value)
@@ -111,7 +111,7 @@ def test_load_config_merges_root_and_user(tmp_path: Path) -> None:
     user = tmp_path / "config.user.yaml"
     user.write_text("persistence:\n  db_path: from_user\n")
     with patch.dict(os.environ, {"TALKIE_CONFIG": str(root)}):
-        with patch.object(config, "_get_module_config_paths", return_value=[]):
+        with patch.object(config, "_get_module_configs_by_id", return_value=[]):
             merged = load_config()
             assert isinstance(merged, dict)
             assert merged.get("persistence", {}).get("db_path") == "from_user"
@@ -122,22 +122,29 @@ def test_load_config_without_user_file(tmp_path: Path) -> None:
     root = tmp_path / "config.yaml"
     root.write_text("ollama:\n  model_name: phi\n")
     with patch.dict(os.environ, {"TALKIE_CONFIG": str(root)}):
-        with patch.object(config, "_get_module_config_paths", return_value=[]):
+        with patch.object(config, "_get_module_configs_by_id", return_value=[]):
             merged = load_config()
             assert merged.get("ollama", {}).get("model_name") == "phi"
             assert isinstance(merged, dict)
 
 
-def test_load_config_merges_module_configs_first(tmp_path: Path) -> None:
-    mod_cfg = tmp_path / "mod.yaml"
-    mod_cfg.write_text("audio:\n  sample_rate: 16000\n")
+def test_load_config_merges_module_configs_under_modules_key(tmp_path: Path) -> None:
+    mod_cfg = tmp_path / "speech.yaml"
+    mod_cfg.write_text("audio:\n  sample_rate: 16000\nstt:\n  engine: whisper\n")
     root = tmp_path / "config.yaml"
-    root.write_text("audio:\n  sample_rate: 48000\n  device_id: 0\n")
+    root.write_text("persistence:\n  db_path: data/talkie.db\n")
     with patch.dict(os.environ, {"TALKIE_CONFIG": str(root)}):
-        with patch.object(config, "_get_module_config_paths", return_value=[mod_cfg]):
+        with patch.object(
+            config, "_get_module_configs_by_id", return_value=[("speech", mod_cfg)]
+        ):
             merged = load_config()
-            assert merged.get("audio", {}).get("sample_rate") == 48000
-            assert merged.get("audio", {}).get("device_id") == 0
+            assert "modules" in merged
+            assert "speech" in merged["modules"]
+            assert merged["modules"]["speech"].get("audio", {}).get("sample_rate") == 16000
+            assert merged["modules"]["speech"].get("stt", {}).get("engine") == "whisper"
+            # Backward compat: audio/stt at top level from modules.speech
+            assert merged.get("audio", {}).get("sample_rate") == 16000
+            assert merged.get("stt", {}).get("engine") == "whisper"
 
 
 def test_load_config_modules_enabled_only_no_module_paths(tmp_path: Path) -> None:
@@ -148,7 +155,7 @@ def test_load_config_modules_enabled_only_no_module_paths(tmp_path: Path) -> Non
         "persistence:\n  db_path: data/talkie.db\n"
     )
     with patch.dict(os.environ, {"TALKIE_CONFIG": str(root)}):
-        with patch.object(config, "_get_module_config_paths", return_value=[]):
+        with patch.object(config, "_get_module_configs_by_id", return_value=[]):
             merged = load_config()
     assert get_modules_enabled(merged) == ["speech", "rag", "browser"]
     assert merged.get("persistence", {}).get("db_path") == "data/talkie.db"
@@ -321,10 +328,10 @@ def test_resolve_internal_service_url_consul_exception_returns_unchanged() -> No
     assert result == "http://ollama.service.consul:11434"
 
 
-def test_get_module_config_paths_exception_returns_empty_list() -> None:
+def test_get_module_configs_by_id_exception_returns_empty_list() -> None:
     with patch(
-        "sdk.get_module_config_paths",
+        "sdk.discover_modules",
         side_effect=Exception("discovery failed"),
     ):
-        result = config._get_module_config_paths()
+        result = config._get_module_configs_by_id()
     assert result == []

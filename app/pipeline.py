@@ -24,6 +24,7 @@ from sdk import (
     STTEngine,
     TTSEngine,
     chunk_rms_level,
+    get_speech_section,
 )
 from app.browse_command import BrowseCommandMatcher
 from llm.client import FALLBACK_MESSAGE, MEMORY_ERROR_MESSAGE, OllamaClient
@@ -61,6 +62,24 @@ def _only_search_instruction_if_list(text: str) -> str:
             else "Say open and a number to open a result."
         )
     return t
+
+
+def _looks_like_malformed_regeneration(s: str) -> bool:
+    """True if regeneration returned a list, meta format, or multiple sentences (e.g. echoed context + current)."""
+    if not s or not s.strip():
+        return False
+    t = s.strip()
+    if "\n" in t:
+        return True
+    if re.match(r"^\s*\d+\.\s+", t):
+        return True
+    if re.search(r"\s*\(\s*\d+\s*%\s*\)", t):
+        return True
+    # Multiple sentences: model may have concatenated a previous response with current phrase (e.g. "I want water. Ready! Lead bathroom.")
+    segments = [x.strip() for x in re.split(r"\.\s+", t) if x.strip()]
+    if len(segments) >= 2:
+        return True
+    return False
 
 
 def create_pipeline(
@@ -107,14 +126,23 @@ def create_pipeline(
                 auto_sensitivity = {"enabled": False}
 
     if llm_prompt_config is None:
+        raw_config = getattr(config, "_raw", config)
+        llm_base = dict(config.get("llm", {}) or {})
+        speech_cfg = get_speech_section(raw_config)
+        prompt_cfg = speech_cfg.get("prompt") if isinstance(speech_cfg.get("prompt"), dict) else None
+        if prompt_cfg:
+            if prompt_cfg.get("system"):
+                llm_base["system_prompt"] = prompt_cfg["system"]
+                llm_base["regeneration_system_prompt"] = prompt_cfg["system"]
+            if prompt_cfg.get("user_template"):
+                llm_base["user_prompt_template"] = prompt_cfg["user_template"]
+                llm_base["regeneration_user_prompt_template"] = prompt_cfg["user_template"]
         try:
-            from modules.speech import apply_llm_calibration_overlay
+            from app.config_overlay import apply_llm_calibration_overlay
 
-            llm_prompt_config = apply_llm_calibration_overlay(
-                config.get("llm", {}), settings_repo
-            )
+            llm_prompt_config = apply_llm_calibration_overlay(llm_base, settings_repo)
         except ImportError:
-            llm_prompt_config = config.get("llm", {}) or {}
+            llm_prompt_config = llm_base
 
     ollama_cfg = config.get("ollama", {})
     base_url = config.resolve_internal_service_url(
@@ -1130,6 +1158,7 @@ class Pipeline:
                                 regeneration_certainty is None
                                 or regeneration_certainty >= certainty_threshold
                             )
+                            and not _looks_like_malformed_regeneration(intent_sentence)
                         )
                         if skip_completion:
                             response = intent_sentence
@@ -1143,6 +1172,10 @@ class Pipeline:
                                 )
                             )
                         else:
+                            if _looks_like_malformed_regeneration(intent_sentence):
+                                self._debug(
+                                    "Regeneration returned list/meta format; running completion with raw transcription"
+                                )
                             if used_regeneration and regeneration_certainty is not None:
                                 self._debug(
                                     "Certainty %d%% < %d%%, running completion call"
@@ -1164,6 +1197,12 @@ class Pipeline:
                                     )
                                     profile_context = ""
                             retrieved_context = ""
+                            # Use raw transcription when regeneration was malformed (e.g. list format) so LLM formulates one sentence.
+                            phrase_for_completion = (
+                                text
+                                if _looks_like_malformed_regeneration(intent_sentence)
+                                else intent_sentence
+                            )
                             # Use only current sentence in prompt; history is used only for repeat check, not in the prompt.
                             system = build_system_prompt(
                                 profile_context,
@@ -1174,7 +1213,7 @@ class Pipeline:
                                 conversation_context=None,
                             )
                             user_prompt = build_user_prompt(
-                                intent_sentence,
+                                phrase_for_completion,
                                 user_prompt_template=self._llm_prompt_config.get(
                                     "user_prompt_template"
                                 ),
@@ -1239,10 +1278,47 @@ class Pipeline:
                                 and rn2 == _norm(self._last_spoken_response)
                             )
                         ):
-                            response = text
                             self._debug(
-                                "Intent was also a repeat; using raw transcription"
+                                "Intent was also a repeat; formulating raw transcription via LLM"
                             )
+                            try:
+                                profile_context = (
+                                    profile_context_prefetch
+                                    if profile_context_prefetch is not None
+                                    else self._profile.get_context_for_llm()
+                                )
+                                system = build_system_prompt(
+                                    profile_context,
+                                    system_base=self._llm_prompt_config.get(
+                                        "system_prompt"
+                                    ),
+                                    retrieved_context=None,
+                                    conversation_context=None,
+                                )
+                                user_prompt = build_user_prompt(
+                                    text,
+                                    user_prompt_template=self._llm_prompt_config.get(
+                                        "user_prompt_template"
+                                    ),
+                                )
+                                response = self._llm.generate(user_prompt, system)
+                                if response and response.strip():
+                                    self._debug(
+                                        "LLM formulated raw transcription: %s"
+                                        % (
+                                            (response[:60] + "...")
+                                            if len(response) > 60
+                                            else response
+                                        )
+                                    )
+                                else:
+                                    response = text
+                            except Exception as e:
+                                logger.debug(
+                                    "LLM formulation of raw transcription failed: %s",
+                                    e,
+                                )
+                                response = text
 
                 if not (response or "").strip():
                     response = (

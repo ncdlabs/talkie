@@ -772,6 +772,7 @@
         var out = String(text).trim();
         out = out.replace(/\s*[.,;:]?\s*\(?\s*certainty\s*[:\s]?\s*\d+\s*%?\s*\)?\s*$/gi, '').trim();
         out = out.replace(/\s*[.,;:]?\s*\(?\s*\d+\s*%\s*certainty\s*\)?\s*$/gi, '').trim();
+        if (out.length >= 2 && out.charAt(0) === '"' && out.charAt(out.length - 1) === '"') out = out.slice(1, -1).trim();
         return out || String(text).trim();
       }
       function getDefaultVoice() {
@@ -1071,11 +1072,6 @@
           }
           unlockSpeechForResponse();
           if (activeModule === m) {
-            var elapsed = Date.now() - startCaptureTime;
-            if (elapsed < START_DEBOUNCE_MS) {
-              setMainStatus('Wait for "Listening…" (startup can take 30s). Click again to stop.');
-              return;
-            }
             stopCapture();
             return;
           }

@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure project root is on path
 _ROOT = Path(__file__).resolve().parent
@@ -98,7 +99,7 @@ def _create_pipeline_and_app(
             logger.debug("Module %s register (phase 1) skipped: %s", module_dir, e)
 
     speech_comps = context.get("speech_components")
-    from modules.speech.tts.noop_engine import NoOpTTSEngine
+    from sdk import NoOpTTSEngine
 
     pipeline = create_pipeline(
         config,
@@ -166,6 +167,46 @@ def _create_pipeline_and_app(
         "broadcast": broadcast,
         "quit_callback": _quit_confirmed,
     }
+
+
+def _get_speech_api_client(raw_config: dict) -> Any:
+    """Return a ModuleAPIClient for the speech module when server is configured, else None."""
+    try:
+        from modules.api.config import get_module_base_url, get_module_server_config
+        from modules.api.client import ModuleAPIClient
+
+        server_config = get_module_server_config(raw_config, "speech")
+        if server_config is None:
+            return None
+        base_url = get_module_base_url(server_config)
+        return ModuleAPIClient(
+            base_url=base_url,
+            timeout_sec=server_config["timeout_sec"],
+            retry_max=server_config["retry_max"],
+            retry_delay_sec=server_config["retry_delay_sec"],
+            circuit_breaker_failure_threshold=server_config[
+                "circuit_breaker_failure_threshold"
+            ],
+            circuit_breaker_recovery_timeout_sec=server_config[
+                "circuit_breaker_recovery_timeout_sec"
+            ],
+            api_key=server_config["api_key"],
+            module_name="speech",
+            use_service_discovery=server_config.get("use_service_discovery", False),
+            consul_host=server_config.get("consul_host"),
+            consul_port=server_config.get("consul_port", 8500),
+            keydb_host=server_config.get("keydb_host"),
+            keydb_port=server_config.get("keydb_port", 6379),
+            load_balancing_strategy=server_config.get(
+                "load_balancing_strategy", "health_based"
+            ),
+            health_check_interval_sec=server_config.get(
+                "health_check_interval_sec", 30.0
+            ),
+        )
+    except Exception as e:
+        logger.debug("Speech API client not available: %s", e)
+        return None
 
 
 def main() -> None:
@@ -405,15 +446,20 @@ def create_app(
             "tts_rate",
         ]
         out = settings_repo.get_many(keys)
-        try:
-            from modules.speech.calibration.voice_profile import (
-                is_voice_profile_available,
-            )
-
-            out["voice_profile_enrolled"] = (
-                "true" if is_voice_profile_available(settings_repo) else "false"
-            )
-        except Exception:
+        raw_config = getattr(deps["config"], "_raw", deps["config"])
+        speech_client = _get_speech_api_client(raw_config)
+        if speech_client:
+            try:
+                loop = asyncio.get_event_loop()
+                resp = await loop.run_in_executor(
+                    None, lambda: speech_client._request("GET", "/voice_profile/available")
+                )
+                out["voice_profile_enrolled"] = (
+                    "true" if resp.get("available") else "false"
+                )
+            except Exception:
+                out["voice_profile_enrolled"] = "false"
+        else:
             out["voice_profile_enrolled"] = "false"
         return out
 
@@ -443,18 +489,31 @@ def create_app(
 
     @app.get("/api/calibration/steps")
     async def api_calibration_steps():
-        """Return ordered calibration steps (voice enrollment, then sensitivity/pause)."""
+        """Return ordered calibration steps from speech module when configured, else empty."""
+        raw_config = getattr(deps["config"], "_raw", deps["config"])
+        speech_client = _get_speech_api_client(raw_config)
+        if not speech_client:
+            return {"steps": []}
         try:
-            from modules.speech.calibration import CALIBRATION_STEPS
-
-            return {"steps": CALIBRATION_STEPS}
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(
+                None, lambda: speech_client._request("GET", "/calibration/steps")
+            )
+            return {"steps": resp.get("steps", [])}
         except Exception as e:
             logger.debug("Calibration steps failed: %s", e)
             return {"steps": []}
 
     @app.post("/api/calibration/voice_enroll")
     async def api_calibration_voice_enroll(request: Request):
-        """Enroll user voice from base64 audio. Uses raw body to avoid validation and support large payloads."""
+        """Enroll user voice from base64 audio. Proxies to speech module when configured."""
+        raw_config = getattr(deps["config"], "_raw", deps["config"])
+        speech_client = _get_speech_api_client(raw_config)
+        if not speech_client:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Speech module not configured; enable modules.speech.server"},
+            )
         try:
             import json as json_mod
 
@@ -474,82 +533,81 @@ def create_app(
                         "error": "Request body must be a JSON object with audio_base64 and sample_rate"
                     },
                 )
-            try:
-                from modules.speech.calibration.voice_profile import enroll_user_voice
-                import base64 as b64
-            except ImportError as e:
-                return JSONResponse(status_code=503, content={"error": str(e)})
             audio_base64 = (
                 (body.get("audio_base64") or "").strip()
                 if isinstance(body.get("audio_base64"), str)
                 else ""
             )
-            try:
-                sample_rate = max(8000, min(48000, int(body.get("sample_rate", 16000))))
-            except (TypeError, ValueError):
-                sample_rate = 16000
             if not audio_base64:
                 return JSONResponse(
                     status_code=400, content={"error": "audio_base64 required"}
                 )
             try:
-                audio_bytes = b64.b64decode(audio_base64)
-            except Exception as e:
-                return JSONResponse(
-                    status_code=400, content={"error": f"Invalid audio_base64: {e}"}
-                )
-            success, message = enroll_user_voice(
-                audio_bytes, sample_rate, settings_repo
+                sample_rate = max(8000, min(48000, int(body.get("sample_rate", 16000))))
+            except (TypeError, ValueError):
+                sample_rate = 16000
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(
+                None,
+                lambda: speech_client._request(
+                    "POST", "/calibration/voice_enroll", json_data=body
+                ),
             )
-            if success:
-                return {"ok": True, "message": message}
-            return JSONResponse(status_code=400, content={"error": message})
+            if resp.get("success"):
+                return {"ok": True, "message": resp.get("message", "")}
+            return JSONResponse(
+                status_code=400,
+                content={"error": resp.get("message", "Enrollment failed")},
+            )
         except Exception as e:
             logger.exception("Voice enrollment failed: %s", e)
-            logger.info("Voice enrollment 500: %s", e)
             return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.post("/api/calibration/voice_clear")
     async def api_calibration_voice_clear():
-        """Clear enrolled voice profile so the app accepts all speakers again."""
+        """Clear enrolled voice profile. Proxies to speech module when configured."""
+        raw_config = getattr(deps["config"], "_raw", deps["config"])
+        speech_client = _get_speech_api_client(raw_config)
+        if not speech_client:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Speech module not configured; enable modules.speech.server"},
+            )
         try:
-            from modules.speech.calibration.voice_profile import clear_voice_profile
-
-            clear_voice_profile(settings_repo)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, lambda: speech_client._request("POST", "/calibration/voice_clear")
+            )
             return {"ok": True}
         except Exception as e:
             logger.exception("Voice clear failed: %s", e)
             return JSONResponse(status_code=500, content={"error": str(e)})
 
+    _default_voices = [
+        {"name": "Daniel", "gender": "male"},
+        {"name": "Alex", "gender": "male"},
+        {"name": "Fred", "gender": "male"},
+        {"name": "Samantha", "gender": "female"},
+        {"name": "Karen", "gender": "female"},
+        {"name": "Victoria", "gender": "female"},
+    ]
+
     @app.get("/api/settings/voices")
     async def api_settings_voices():
+        raw_config = getattr(deps["config"], "_raw", deps["config"])
+        speech_client = _get_speech_api_client(raw_config)
+        if not speech_client:
+            return {"voices": _default_voices}
         try:
-            from modules.speech.tts.say_engine import get_available_voices_with_gender
-
-            voices = get_available_voices_with_gender()
-            if not voices:
-                return {
-                    "voices": [
-                        {"name": "Daniel", "gender": "male"},
-                        {"name": "Alex", "gender": "male"},
-                        {"name": "Fred", "gender": "male"},
-                        {"name": "Samantha", "gender": "female"},
-                        {"name": "Karen", "gender": "female"},
-                        {"name": "Victoria", "gender": "female"},
-                    ]
-                }
-            return {"voices": voices}
-        except Exception:
-            return {
-                "voices": [
-                    {"name": "Daniel", "gender": "male"},
-                    {"name": "Alex", "gender": "male"},
-                    {"name": "Fred", "gender": "male"},
-                    {"name": "Samantha", "gender": "female"},
-                    {"name": "Karen", "gender": "female"},
-                    {"name": "Victoria", "gender": "female"},
-                ]
-            }
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(
+                None, lambda: speech_client._request("GET", "/voices")
+            )
+            voices = resp.get("voices", _default_voices)
+            return {"voices": voices if voices else _default_voices}
+        except Exception as e:
+            logger.debug("Voices from speech module failed: %s", e)
+            return {"voices": _default_voices}
 
     @app.get("/api/training")
     async def api_training_list():

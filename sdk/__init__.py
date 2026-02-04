@@ -29,7 +29,12 @@ from sdk.abstractions import (
     TTSEngine,
 )
 from sdk.audio_utils import INT16_MAX, chunk_rms_level, resample_int16
-from sdk.config import get_browser_section, get_rag_section, get_section
+from sdk.config import (
+    get_browser_section,
+    get_rag_section,
+    get_section,
+    get_speech_section,
+)
 from sdk.discovery import (
     DEFAULT_CONFIG_FILENAME,
     DEFAULT_DOCS_PATH,
@@ -72,5 +77,6 @@ __all__ = [
     "get_modules_info",
     "get_rag_section",
     "get_section",
+    "get_speech_section",
     "resolve_module_help_path",
 ]

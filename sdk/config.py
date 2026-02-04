@@ -90,6 +90,25 @@ def get_rag_section(raw_config: dict) -> dict[str, Any]:
     }
 
 
+def get_speech_section(raw_config: dict) -> dict[str, Any]:
+    """
+    Return speech module config from full raw config.
+    Prefers config['modules']['speech']. If missing, falls back to top-level audio/stt/tts
+    for backward compatibility.
+    """
+    modules = raw_config.get("modules") or {}
+    speech = modules.get("speech")
+    if isinstance(speech, dict) and speech:
+        return dict(speech)
+    # Backward compat: no modules.speech, use top-level
+    out: dict[str, Any] = {}
+    for key in ("audio", "stt", "tts", "prompt"):
+        val = raw_config.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
 def get_browser_section(raw_config: dict) -> dict[str, Any]:
     """
     Return normalized browser config from full raw config.
@@ -116,4 +135,5 @@ __all__ = [
     "get_browser_section",
     "get_rag_section",
     "get_section",
+    "get_speech_section",
 ]

@@ -318,6 +318,38 @@ def test_parse_regeneration_response_sentence_strips_meta_commentary() -> None:
     assert "that the user meant to say" not in sent
 
 
+def test_parse_regeneration_response_sentence_strips_user_said_prefix() -> None:
+    """Regeneration should return only first-person content; strip 'The user said: ' / 'User said: '."""
+    raw = '{"sentence": "The user said: I want water.", "certainty": 95}'
+    sent, cert = parse_regeneration_response(raw)
+    assert cert == 95
+    assert sent == "I want water."
+    assert "user said" not in sent.lower()
+    raw2 = '{"sentence": "User said: I want water", "certainty": 90}'
+    sent2, _ = parse_regeneration_response(raw2)
+    assert sent2 == "I want water"
+
+
+def test_parse_regeneration_response_sentence_strips_surrounding_quotes() -> None:
+    """Regeneration JSON may include quoted sentence; strip so we don't speak quotes."""
+    raw = '{"sentence": "\\"That\'s a room.\\"", "certainty": 90}'
+    sent, cert = parse_regeneration_response(raw)
+    assert cert == 90
+    assert sent == "That's a room."
+    assert not sent.startswith('"')
+
+
+def test_parse_regeneration_response_sentence_ensures_first_person() -> None:
+    """Fragment like 'Need bathroom.' should become 'I need bathroom.'."""
+    raw = '{"sentence": "Need bathroom.", "certainty": 95}'
+    sent, cert = parse_regeneration_response(raw)
+    assert cert == 95
+    assert sent == "I need bathroom."
+    raw2 = '{"sentence": "Want water", "certainty": 90}'
+    sent2, _ = parse_regeneration_response(raw2)
+    assert sent2 == "I want water"
+
+
 # ---- parse_regeneration_response fallback (_fallback_sentence_from_raw) ----
 def test_parse_regeneration_response_fallback_sentence_colon() -> None:
     raw = "Sentence: I want water."

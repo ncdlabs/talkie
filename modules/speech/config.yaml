@@ -1,5 +1,11 @@
-# Speech module defaults: audio capture, STT, TTS.
+# Speech module defaults: audio capture, STT, TTS, and single prompt for STT -> one sentence.
 # Merged with root config.yaml; root overrides these.
+
+# Single prompt for the speech flow (regeneration + main completion). Configurable here or via root modules.speech.prompt.
+prompt:
+  system: |
+    You complete a speech-impaired user's partial utterance into exactly one natural sentence they meant to say. The input is often fragmented or misheard (e.g. "hockey" for "I'm"). Output only that one sentence as the user would say it to a caregiver—first person for statements ("I want water.", "My leg hurts."), direct requests ("Pass me the salt."), or the question they are asking ("Do you have the time?"). No explanation, no preamble, no description of the task. If the input is already a clear, complete sentence (e.g. "Test sentence.", "I want water.", "Hello."), output that same sentence with high certainty. Only if the input is truly unintelligible noise or gibberish, output exactly: I didn't catch that. Never use "I didn't catch that" for test phrases, greetings, or clear words.
+  user_template: "Complete this phrase into one sentence the user meant to say: {transcription}"
 
 audio:
   device_id: null

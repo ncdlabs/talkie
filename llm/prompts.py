@@ -13,7 +13,7 @@ DEFAULT_SYSTEM_BASE = """You assist a speech-impaired user in conversation. You 
 DEFAULT_USER_PROMPT_TEMPLATE = "Current phrase to respond to (output one sentence for this phrase only): {transcription}"
 
 # Regeneration: raw STT output -> single sentence most likely reflecting user intent.
-DEFAULT_REGENERATION_SYSTEM = """You complete a speech-impaired user's partial utterance into exactly one natural sentence they meant to say. The input is often fragmented or misheard (e.g. "hockey" for "I'm"). Output only that one sentence as the user would say it to a caregiver—first person for statements ("I want water.", "My leg hurts."), direct requests ("Pass me the salt."), or the question they are asking ("Do you have the time?"). No explanation, no preamble, no description of the task. If the input is already a clear, complete sentence (e.g. "Test sentence.", "I want water.", "Hello."), output that same sentence with high certainty. Only if the input is truly unintelligible noise or gibberish, output exactly: I didn't catch that. Never use "I didn't catch that" for test phrases, greetings, or clear words."""
+DEFAULT_REGENERATION_SYSTEM = """You complete a speech-impaired user's partial utterance into exactly one natural sentence they meant to say. The input is often fragmented or misheard (e.g. "hockey" for "I'm"). Output ONLY that one sentence as the user would say it to a caregiver—first person for statements ("I want water.", "My leg hurts."), direct requests ("Pass me the salt."), or the question they are asking ("Do you have the time?"). Do not repeat, include, or concatenate any previous response or example; output only the single sentence for this phrase. No explanation, no preamble, no description of the task. If the input is already a clear, complete sentence (e.g. "Test sentence.", "I want water.", "Hello."), output that same sentence with high certainty. Only if the input is truly unintelligible noise or gibberish, output exactly: I didn't catch that. Never use "I didn't catch that" for test phrases, greetings, or clear words."""
 
 # When requesting certainty, we append this to the system prompt so the model returns JSON.
 REGENERATION_JSON_SUFFIX = """ Output your reply as a single JSON object with exactly two keys: "sentence" (the one sentence as above, or "I didn't catch that." if unintelligible) and "certainty" (0-100). No other text, no markdown."""
@@ -412,16 +412,64 @@ _META_MEANT_TO_SAY_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Model sometimes returns third-person framing instead of first-person; strip so we keep only "I want water".
+_USER_SAID_PREFIX = re.compile(
+    r"^\s*(?:The\s+)?user\s+said\s*:\s*",
+    re.IGNORECASE,
+)
+
+# First-person sentence start (so we don't prepend "I " to already first-person).
+_FIRST_PERSON_START = re.compile(
+    r"^\s*(?:I\s|I'm\s|I've\s|I'll\s|I'd\s|My\s|We\s|We're\s|We've\s|We'll\s)",
+    re.IGNORECASE,
+)
+
+# Fragment starting with a request verb: prepend "I " and lowercase so "Need bathroom." -> "I need bathroom."
+_REQUEST_VERB_START = re.compile(
+    r"^\s*(?:Need|Want|Get|Have|Feel|Am|Going|Would\s+like|Could|Can)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_surrounding_quotes(text: str) -> str:
+    """Remove surrounding double quotes so we don't speak \"That's a room.\"."""
+    if not text or not text.strip():
+        return text
+    t = text.strip()
+    if len(t) >= 2 and t.startswith('"') and t.endswith('"'):
+        return t[1:-1].strip()
+    return t
+
+
+def _ensure_first_person(sentence: str) -> str:
+    """If the sentence is a fragment like 'Need bathroom.', prepend 'I ' and fix case so it reads as first-person."""
+    if not sentence or not sentence.strip():
+        return sentence
+    s = sentence.strip()
+    s = _strip_surrounding_quotes(s)
+    if not s:
+        return sentence.strip()
+    if _FIRST_PERSON_START.match(s):
+        return s
+    if _REQUEST_VERB_START.match(s):
+        return "I " + s[0].lower() + s[1:] if len(s) > 1 else ("I " + s.lower())
+    return s
+
 
 def _strip_meta_commentary_from_sentence(text: str) -> str:
-    """If the sentence is meta-commentary (e.g. 'Yes, I can complete... that the user meant to say: \"X\"'), return only X."""
+    """If the sentence is meta-commentary (e.g. 'Yes, I can complete... that the user meant to say: \"X\"'), return only X.
+    Also strip 'The user said: ' / 'User said: ' so we keep only the first-person content (e.g. 'I want water').
+    Strips surrounding quotes and normalizes to first-person."""
     if not text or not text.strip():
         return text
     t = text.strip()
     m = _META_MEANT_TO_SAY_PATTERN.search(t)
     if m:
-        return m.group(1).strip()
-    return t
+        t = m.group(1).strip()
+    else:
+        t = _USER_SAID_PREFIX.sub("", t).strip()
+    t = _strip_surrounding_quotes(t)
+    return _ensure_first_person(t) if t else t
 
 
 def _fallback_sentence_from_raw(raw: str) -> str:

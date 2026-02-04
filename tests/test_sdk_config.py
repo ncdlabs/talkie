@@ -1,9 +1,8 @@
-"""Tests for SDK config section getters: get_rag_section, get_browser_section."""
+"""Tests for SDK config section getters: get_rag_section, get_browser_section, get_speech_section."""
 
 from __future__ import annotations
 
-
-from sdk import get_browser_section, get_rag_section
+from sdk import get_browser_section, get_rag_section, get_speech_section
 
 
 def test_get_rag_section_empty_returns_defaults() -> None:
@@ -51,3 +50,31 @@ def test_get_browser_section_missing_query_placeholder_uses_duckduckgo() -> None
     cfg = get_browser_section(raw)
     assert "{query}" in cfg["search_engine_url"]
     assert "duckduckgo" in cfg["search_engine_url"]
+
+
+def test_get_speech_section_empty_returns_empty() -> None:
+    cfg = get_speech_section({})
+    assert isinstance(cfg, dict)
+    assert cfg == {}
+
+
+def test_get_speech_section_prefers_modules_speech() -> None:
+    raw = {
+        "modules": {
+            "speech": {
+                "audio": {"sample_rate": 16000},
+                "prompt": {"system": "You complete...", "user_template": "{transcription}"},
+            }
+        }
+    }
+    cfg = get_speech_section(raw)
+    assert cfg.get("audio", {}).get("sample_rate") == 16000
+    assert cfg.get("prompt", {}).get("system") == "You complete..."
+    assert cfg.get("prompt", {}).get("user_template") == "{transcription}"
+
+
+def test_get_speech_section_fallback_to_top_level() -> None:
+    raw = {"audio": {"sample_rate": 48000}, "stt": {"engine": "whisper"}}
+    cfg = get_speech_section(raw)
+    assert cfg.get("audio", {}).get("sample_rate") == 48000
+    assert cfg.get("stt", {}).get("engine") == "whisper"

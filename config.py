@@ -42,12 +42,16 @@ def _load_yaml(path: Path) -> dict:
     return load_yaml_file(path)
 
 
-def _get_module_config_paths() -> list[Path]:
-    """Discover modules and return ordered config file paths (for merging)."""
+def _get_module_configs_by_id() -> list[tuple[str, Path]]:
+    """Discover modules and return (module_id, config_path) for merging into config['modules'][module_id]."""
     try:
-        from sdk import get_module_config_paths
+        from sdk import discover_modules
 
-        return get_module_config_paths(_MODULES_ROOT)
+        result = []
+        for _name, config_path in discover_modules(_MODULES_ROOT):
+            module_id = config_path.parent.name
+            result.append((module_id, config_path))
+        return result
     except Exception:
         return []
 
@@ -70,19 +74,22 @@ def get_modules_enabled(raw_config: dict | None) -> list[str]:
 
 def load_config() -> dict:
     """
-    Load merged config: discovered module configs -> root config.yaml -> config.user.yaml.
-    Module configs are discovered from modules/ (each subdir with config.yaml or MODULE.yaml).
-    Root config path from TALKIE_CONFIG or project root/config.yaml.
+    Load merged config: module configs under config['modules'][module_id] -> root config.yaml -> config.user.yaml.
+    Module configs are discovered from modules/ (each subdir with config.yaml or MODULE.yaml) and merged into
+    config['modules'][module_id]. Root and user can override via top-level or modules.<id>.
+    For backward compatibility, audio/stt/tts from modules.speech are also merged to top level.
     """
     config_path = os.environ.get("TALKIE_CONFIG", str(_CONFIG_ROOT / "config.yaml"))
     root_path = Path(config_path)
     config_dir = root_path.parent
 
     merged = {}
-    for mod_path in _get_module_config_paths():
+    for module_id, mod_path in _get_module_configs_by_id():
         data = _load_yaml(mod_path)
         if data:
-            merged = _deep_merge(merged, data)
+            merged.setdefault("modules", {})[module_id] = _deep_merge(
+                merged.get("modules", {}).get(module_id, {}), data
+            )
 
     if root_path.exists():
         root_data = _load_yaml(root_path)
@@ -96,6 +103,13 @@ def load_config() -> dict:
         user_data = _load_yaml(user_path)
         if user_data:
             merged = _deep_merge(merged, user_data)
+
+    # Backward compat: expose modules.speech audio/stt/tts at top level for code using config.get("audio") etc.
+    speech_cfg = merged.get("modules", {}).get("speech", {})
+    if speech_cfg:
+        for key in ("audio", "stt", "tts"):
+            if key in speech_cfg:
+                merged[key] = _deep_merge(merged.get(key, {}), speech_cfg[key])
 
     return merged
 

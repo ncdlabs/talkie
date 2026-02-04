@@ -1,76 +1,35 @@
 """
-Speech module: single internal library for audio capture, STT, TTS, speaker filter, calibration.
-All construction goes through SpeechFactory; public API: create_speech_components(), apply_*_overlay().
+Speech module loader: core only loads the speech module via API or uses SDK no-ops.
+When modules.speech.server is enabled, returns remote clients; otherwise no-op components.
 """
 
 from __future__ import annotations
 
 from typing import Any, NamedTuple
 
-from sdk import get_logger
+from sdk import (
+    NoOpCapture,
+    NoOpSpeakerFilter,
+    NoOpSTTEngine,
+    NoOpTTSEngine,
+    get_logger,
+    get_speech_section,
+)
 
 logger = get_logger("speech")
 
 
-# --- Calibration overlay (shared logic; used by factory and public API) ---
-
-
-def _overlay_audio_calibration(audio_cfg: dict, settings_repo: Any) -> dict:
-    """Overlay calibration_* from settings_repo onto audio config. Returns new dict."""
-    out = dict(audio_cfg)
-    if settings_repo is None:
-        return out
-    try:
-        sens_s = settings_repo.get("calibration_sensitivity")
-        if sens_s is not None and sens_s.strip():
-            try:
-                s = float(sens_s)
-                out["sensitivity"] = max(0.5, min(10.0, s))
-            except (TypeError, ValueError):
-                logger.debug("Invalid calibration_sensitivity, using config")
-        chunk_s = settings_repo.get("calibration_chunk_duration_sec")
-        if chunk_s is not None and chunk_s.strip():
-            try:
-                c = float(chunk_s)
-                out["chunk_duration_sec"] = max(4.0, min(15.0, c))
-            except (TypeError, ValueError):
-                logger.debug("Invalid calibration_chunk_duration_sec, using config")
-    except Exception as e:
-        logger.debug("Calibration overlay failed: %s", e)
-    return out
-
-
-def _overlay_llm_calibration(llm_cfg: dict, settings_repo: Any) -> dict:
-    """Overlay calibration_min_transcription_length from settings_repo onto llm config. Returns new dict."""
-    out = dict(llm_cfg)
-    if settings_repo is None:
-        return out
-    try:
-        min_len_s = settings_repo.get("calibration_min_transcription_length")
-        if min_len_s is not None and min_len_s.strip():
-            try:
-                n = int(min_len_s)
-                out["min_transcription_length"] = max(0, n)
-            except (TypeError, ValueError):
-                logger.debug(
-                    "Invalid calibration_min_transcription_length, using config"
-                )
-    except Exception as e:
-        logger.debug("LLM calibration overlay failed: %s", e)
-    return out
-
-
+# Re-export calibration overlay from app for backward compatibility
 def apply_calibration_overlay(audio_cfg: dict, settings_repo: Any) -> dict:
-    """Public API: overlay calibration_* from settings_repo onto audio config. Returns a new dict."""
-    return _overlay_audio_calibration(audio_cfg, settings_repo)
+    from app.config_overlay import apply_calibration_overlay as _apply
+
+    return _apply(audio_cfg, settings_repo)
 
 
 def apply_llm_calibration_overlay(llm_cfg: dict, settings_repo: Any) -> dict:
-    """Public API: overlay calibration_min_transcription_length onto llm config. Returns a new dict."""
-    return _overlay_llm_calibration(llm_cfg, settings_repo)
+    from app.config_overlay import apply_llm_calibration_overlay as _apply
 
-
-# --- Factory: single place for constructing speech components (OOP) ---
+    return _apply(llm_cfg, settings_repo)
 
 
 class SpeechComponents(NamedTuple):
@@ -83,140 +42,28 @@ class SpeechComponents(NamedTuple):
     auto_sensitivity: dict
 
 
-class SpeechFactory:
-    """
-    Builds all speech components from config and optional settings.
-    Single responsibility: construction; uses sdk.abstractions interfaces.
-    """
-
-    def __init__(self, config: dict, settings_repo: Any = None) -> None:
-        self._config = config
-        self._settings_repo = settings_repo
-        self._audio_cfg = _overlay_audio_calibration(
-            config.get("audio", {}), settings_repo
-        )
-
-    def _auto_sensitivity_config(self) -> dict:
-        cfg = self._audio_cfg
-        enabled = cfg.get("auto_sensitivity", False)
-        return {
-            "enabled": bool(enabled),
-            "min_level": max(
-                0.0, min(1.0, float(cfg.get("auto_sensitivity_min_level", 0.002)))
-            ),
-            "max_level": max(
-                0.0, min(1.0, float(cfg.get("auto_sensitivity_max_level", 0.08)))
-            ),
-            "step": max(0.05, min(2.0, float(cfg.get("auto_sensitivity_step", 0.25)))),
-            "cooldown_chunks": max(
-                1, int(cfg.get("auto_sensitivity_cooldown_chunks", 3))
-            ),
-        }
-
-    def create_capture(self) -> Any:
-        from .audio.capture import AudioCapture
-
-        return AudioCapture(
-            device_id=self._audio_cfg.get("device_id"),
-            sample_rate=int(self._audio_cfg.get("sample_rate", 16000)),
-            chunk_duration_sec=float(self._audio_cfg.get("chunk_duration_sec", 5.0)),
-            sensitivity=float(self._audio_cfg.get("sensitivity", 2.5)),
-        )
-
-    def create_stt(self) -> Any:
-        from .stt.vosk_engine import VoskEngine
-        from .stt.whisper_engine import WhisperEngine
-
-        stt_cfg = self._config.get("stt", {})
-        engine = (stt_cfg.get("engine") or "vosk").lower()
-        if engine == "whisper":
-            whisper_cfg = (stt_cfg.get("whisper") or {}).copy()
-            path = whisper_cfg.pop("model_path", None)
-            return WhisperEngine(model_path=path, config=whisper_cfg)
-        path = (stt_cfg.get("vosk") or {}).get("model_path")
-        return VoskEngine(model_path=path)
-
-    def create_tts(self) -> Any:
-        from .tts.noop_engine import NoOpTTSEngine
-        from .tts.say_engine import SayEngine
-
-        tts_cfg = self._config.get("tts", {})
-        if not tts_cfg.get("enabled", False):
-            return NoOpTTSEngine()
-        engine = (tts_cfg.get("engine") or "say").lower()
-        if engine == "say":
-            from .tts.say_engine import get_rate_wpm
-
-            voice = None
-            if self._settings_repo:
-                try:
-                    voice = self._settings_repo.get("tts_voice")
-                except Exception:
-                    pass
-            if not voice:
-                voice = tts_cfg.get("voice")
-            if not voice:
-                voice = "Daniel"
-            timeout = 300.0
-            try:
-                t = tts_cfg.get("speak_timeout_sec")
-                if t is not None:
-                    timeout = float(t)
-            except (TypeError, ValueError):
-                pass
-            rate_wpm = None
-            if self._settings_repo:
-                try:
-                    rate_wpm = get_rate_wpm(self._settings_repo.get("tts_rate"))
-                except Exception:
-                    pass
-            return SayEngine(voice=voice, speak_timeout_sec=timeout, rate_wpm=rate_wpm)
-        return NoOpTTSEngine()
-
-    def create_speaker_filter(self) -> Any:
-        from .calibration.voice_profile import is_voice_profile_available
-        from .speaker.noop_filter import NoOpSpeakerFilter
-        from .speaker.voice_filter import VoiceProfileSpeakerFilter
-
-        if is_voice_profile_available(self._settings_repo):
-            sample_rate = int(self._audio_cfg.get("sample_rate", 16000))
-            logger.info(
-                "Using saved voice profile: only the calibrated speaker will be accepted"
-            )
-            return VoiceProfileSpeakerFilter(
-                settings_repo=self._settings_repo,
-                sample_rate=sample_rate,
-            )
-        return NoOpSpeakerFilter()
-
-    def create_components(self) -> SpeechComponents:
-        """Build and return the full speech component bundle."""
-        return SpeechComponents(
-            capture=self.create_capture(),
-            stt=self.create_stt(),
-            tts=self.create_tts(),
-            speaker_filter=self.create_speaker_filter(),
-            auto_sensitivity=self._auto_sensitivity_config(),
-        )
+def _default_auto_sensitivity() -> dict:
+    return {
+        "enabled": False,
+        "min_level": 0.002,
+        "max_level": 0.08,
+        "step": 0.25,
+        "cooldown_chunks": 3,
+    }
 
 
 def create_speech_components(
     config: dict, settings_repo: Any = None
 ) -> SpeechComponents:
     """
-    Single entry point: build capture, STT, TTS, and speaker filter from config.
-    Applies calibration overlay; returns SpeechComponents.
-    The speaker filter enforces the configured voice profile so the app only
-    listens to the calibrated speaker; used by all modules and entry points
-    (web, run, and remote speech server when it uses the same settings DB).
-    If server mode is enabled, returns remote API clients instead.
+    Build speech components: remote API clients when speech server is configured,
+    otherwise SDK no-ops so core runs without the speech module.
     """
-    # Check if server mode is enabled
-    from modules.api.config import get_module_server_config, get_module_base_url
+    raw_config = getattr(config, "_raw", config)
+    from modules.api.config import get_module_base_url, get_module_server_config
 
-    server_config = get_module_server_config(config, "speech")
+    server_config = get_module_server_config(raw_config, "speech")
     if server_config is not None:
-        # Server mode: return remote API clients
         from modules.api.client import ModuleAPIClient
         from modules.api.speech_client import (
             RemoteAudioCapture,
@@ -251,11 +98,26 @@ def create_speech_components(
                 "health_check_interval_sec", 30.0
             ),
         )
-
-        # Get auto_sensitivity config from local config (not from server)
-        factory = SpeechFactory(config, settings_repo)
-        auto_sensitivity = factory._auto_sensitivity_config()
-
+        speech_cfg = get_speech_section(raw_config)
+        audio_cfg = speech_cfg.get("audio", {})
+        auto_sensitivity = _default_auto_sensitivity()
+        if audio_cfg.get("auto_sensitivity"):
+            auto_sensitivity["enabled"] = True
+            auto_sensitivity["min_level"] = max(
+                0.0,
+                min(1.0, float(audio_cfg.get("auto_sensitivity_min_level", 0.002))),
+            )
+            auto_sensitivity["max_level"] = max(
+                0.0,
+                min(1.0, float(audio_cfg.get("auto_sensitivity_max_level", 0.08))),
+            )
+            auto_sensitivity["step"] = max(
+                0.05,
+                min(2.0, float(audio_cfg.get("auto_sensitivity_step", 0.25))),
+            )
+            auto_sensitivity["cooldown_chunks"] = max(
+                1, int(audio_cfg.get("auto_sensitivity_cooldown_chunks", 3))
+            )
         return SpeechComponents(
             capture=RemoteAudioCapture(client),
             stt=RemoteSTTEngine(client),
@@ -264,15 +126,20 @@ def create_speech_components(
             auto_sensitivity=auto_sensitivity,
         )
 
-    # In-process mode: return local implementations
-    return SpeechFactory(config, settings_repo).create_components()
+    return SpeechComponents(
+        capture=NoOpCapture(),
+        stt=NoOpSTTEngine(),
+        tts=NoOpTTSEngine(),
+        speaker_filter=NoOpSpeakerFilter(),
+        auto_sensitivity=_default_auto_sensitivity(),
+    )
 
 
 def register(context: dict) -> None:
     """
     Register speech components with the app context (two-phase).
-    Phase 1 (context has no "pipeline"): set context["speech_components"].
-    Phase 2 (context has "pipeline"): no-op; pipeline was built with those components.
+    Phase 1 (context has no "pipeline"): set context["speech_components"] with TTS replaced by NoOp so only browser speaks.
+    Phase 2 (context has "pipeline"): no-op.
     """
     if context.get("pipeline") is not None:
         return
@@ -281,10 +148,7 @@ def register(context: dict) -> None:
     if config is None:
         return
     try:
-        from modules.speech.tts.noop_engine import NoOpTTSEngine
-
         comps = create_speech_components(config, settings_repo)
-        # Server uses NoOpTTSEngine so only the browser speaks
         context["speech_components"] = comps._replace(tts=NoOpTTSEngine())
     except Exception as e:
         logger.debug("Speech module register (phase 1) failed: %s", e)
@@ -292,7 +156,6 @@ def register(context: dict) -> None:
 
 __all__ = [
     "SpeechComponents",
-    "SpeechFactory",
     "apply_calibration_overlay",
     "apply_llm_calibration_overlay",
     "create_speech_components",

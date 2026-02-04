@@ -61,7 +61,7 @@ def test_resolve_db_path_default_when_no_persistence(tmp_path: Path) -> None:
     with patch("history_cmd.load_config", return_value={}):
         with patch.object(Path, "cwd", return_value=tmp_path):
             path = history_cmd._resolve_db_path()
-    assert path == tmp_path / "data/talkie.db"
+    assert path == tmp_path / "data/talkie-core.db"
 
 
 def test_resolve_db_path_file_not_found_exits() -> None:
