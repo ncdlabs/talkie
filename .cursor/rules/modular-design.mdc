@@ -1,0 +1,20 @@
+---
+description: Modular architecture—core vs modules, SDK independence, task differentiation
+alwaysApply: true
+---
+
+# Modular design
+
+- **Core vs modules**
+  - Core (`app/`, `config.py`, `run_web.py`, `run.py`) orchestrates pipeline, config, persistence, profile, and **loads modules only via their public surface**.
+  - Public surface = `register(context)` plus either **remote** (modules.api clients when the module server is configured) or **in-process** (thin loader that returns remote clients or SDK no-ops). No direct use of module implementation packages from app/pipeline/run_web (e.g. no `modules.speech.stt.vosk_engine`, no `modules.browser.fetcher`) except inside that module's own loader.
+  - Module implementation code (when present in-repo) lives under `modules/<name>/` and is used **only inside that module's** `__init__.py` or server. App must not import from `modules.<name>.<impl>` (e.g. `modules.rag.embed`, `modules.browser.service`) except inside that module's loader or HTTP handlers that are part of that module.
+- **SDK independence**
+  - `sdk/` must not import from `app/`, `llm/`, `persistence/`, or from module implementation packages. It may depend on discovery/config and generic utilities only.
+- **Module loaders**
+  - Each `modules/<name>/__init__.py` is a **loader**: it chooses remote client vs in-process implementation. When in-process implementation exists in core (e.g. browser, rag), the loader may instantiate it; app/pipeline/run_web must not bypass the loader. New features in a module belong in the loader or the module's own package, not in app. Loaders may import from `app` only for explicit overlay/registration helpers (e.g. `app.config_overlay`), not module impl.
+- **Task differentiation**
+  - **Core**: pipeline, config merge, persistence, profile, web/WS, discovery, calling module `register()`.
+  - **Modules**: speech (capture/STT/TTS/calibration), RAG (chunk/embed/store/retrieve), browser (search/fetch/open/click/scroll). Each module owns its config schema and API; core only reads `config["modules"][module_id]` and uses the module's public API.
+
+**Do not:** import from `modules.<name>.<impl>` in app or run_web; add module implementation details to app; let sdk import app, llm, or persistence.

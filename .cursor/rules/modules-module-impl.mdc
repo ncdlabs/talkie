@@ -1,0 +1,9 @@
+---
+description: In-repo module implementation is for backward compatibility; prefer server + remote client
+globs: modules/**/*.py
+alwaysApply: false
+---
+
+# Module implementation in core
+
+In-repo implementation under `modules/<name>/` is for backward compatibility. Prefer running the module as a server and using the remote client from the loader. Do not add new module implementation code to app or pipeline; keep it inside the module's package or loader.
